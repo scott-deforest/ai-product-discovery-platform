@@ -4,11 +4,16 @@ import streamlit as st
 
 from src.database import (
     create_assessment,
+    get_document_extraction,
     initialize_database,
     list_assessments,
     list_documents,
 )
-from src.ingestion import save_uploaded_document
+from src.ingestion import (
+    extract_and_save_document,
+    read_extracted_text,
+    save_uploaded_document,
+)
 
 
 st.set_page_config(
@@ -109,6 +114,46 @@ else:
         st.markdown("#### Uploaded documents")
         for document in documents:
             size_kb = int(document["size_bytes"]) / 1024
-            st.write(f"📄 {document['filename']} · {size_kb:.1f} KB")
+            document_id = str(document["id"])
+            with st.container(border=True):
+                st.write(f"📄 {document['filename']} · {size_kb:.1f} KB")
+
+                extraction = get_document_extraction(document_id)
+                button_label = "Re-extract text" if extraction else "Extract text"
+                if st.button(button_label, key=f"extract-{document_id}"):
+                    try:
+                        extract_and_save_document(
+                            document_id=document_id,
+                            assessment_id=selected_assessment_id,
+                            stored_path=str(document["stored_path"]),
+                            file_type=str(document["file_type"]),
+                        )
+                    except (OSError, ValueError) as error:
+                        st.error(
+                            f"Could not extract {document['filename']}: {error}"
+                        )
+                    else:
+                        st.success(f"Extracted text from {document['filename']}.")
+                        extraction = get_document_extraction(document_id)
+
+                if extraction:
+                    st.caption(
+                        f"Text extracted · {extraction['character_count']} characters"
+                    )
+                    try:
+                        extracted_text = read_extracted_text(
+                            str(extraction["text_path"])
+                        )
+                    except OSError as error:
+                        st.error(f"Could not load the extracted text: {error}")
+                    else:
+                        with st.expander("Preview extracted text"):
+                            st.text_area(
+                                "Extracted content",
+                                value=extracted_text,
+                                height=300,
+                                disabled=True,
+                                key=f"preview-{document_id}",
+                            )
     else:
         st.info("No documents have been uploaded to this assessment yet.")

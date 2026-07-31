@@ -51,6 +51,17 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS document_extractions (
+                document_id TEXT PRIMARY KEY,
+                text_path TEXT NOT NULL,
+                character_count INTEGER NOT NULL,
+                extracted_at TEXT NOT NULL,
+                FOREIGN KEY (document_id) REFERENCES documents (id)
+            )
+            """
+        )
 
 
 def create_assessment(
@@ -156,3 +167,46 @@ def list_documents(
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def save_document_extraction(
+    document_id: str,
+    text_path: str,
+    character_count: int,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> None:
+    """Record where extracted document text is stored."""
+    extracted_at = datetime.now(timezone.utc).isoformat()
+
+    with _connect(database_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO document_extractions (
+                document_id, text_path, character_count, extracted_at
+            )
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(document_id) DO UPDATE SET
+                text_path = excluded.text_path,
+                character_count = excluded.character_count,
+                extracted_at = excluded.extracted_at
+            """,
+            (document_id, text_path, character_count, extracted_at),
+        )
+
+
+def get_document_extraction(
+    document_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> Optional[dict[str, object]]:
+    """Return extraction metadata for one document, when available."""
+    with _connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT document_id, text_path, character_count, extracted_at
+            FROM document_extractions
+            WHERE document_id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+
+    return dict(row) if row else None
