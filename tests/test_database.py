@@ -4,7 +4,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.database import create_assessment, initialize_database, list_assessments
+from src.database import (
+    create_assessment,
+    create_document,
+    initialize_database,
+    list_assessments,
+    list_documents,
+)
 
 
 class AssessmentDatabaseTests(unittest.TestCase):
@@ -36,6 +42,27 @@ class AssessmentDatabaseTests(unittest.TestCase):
     def test_name_is_required(self) -> None:
         with self.assertRaisesRegex(ValueError, "Assessment name is required"):
             create_assessment("   ", database_path=self.database_path)
+
+    def test_document_belongs_to_assessment(self) -> None:
+        assessment_id = create_assessment(
+            "Customer Support Workflow",
+            database_path=self.database_path,
+        )
+        create_document(
+            document_id="document-123",
+            assessment_id=assessment_id,
+            filename="workflow.md",
+            stored_path="/tmp/workflow.md",
+            file_type="md",
+            size_bytes=42,
+            database_path=self.database_path,
+        )
+
+        documents = list_documents(assessment_id, self.database_path)
+
+        self.assertEqual(len(documents), 1)
+        self.assertEqual(documents[0]["filename"], "workflow.md")
+        self.assertEqual(documents[0]["assessment_id"], assessment_id)
 
 
 if __name__ == "__main__":

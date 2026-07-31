@@ -2,7 +2,13 @@
 
 import streamlit as st
 
-from src.database import create_assessment, initialize_database, list_assessments
+from src.database import (
+    create_assessment,
+    initialize_database,
+    list_assessments,
+    list_documents,
+)
+from src.ingestion import save_uploaded_document
 
 
 st.set_page_config(
@@ -54,3 +60,55 @@ else:
             st.caption(
                 f"Status: {assessment['status']} · ID: {assessment['id']}"
             )
+
+    st.divider()
+    st.subheader("Upload documents")
+    st.write("Choose the assessment these documents should belong to.")
+
+    assessment_by_id = {
+        str(assessment["id"]): assessment for assessment in assessments
+    }
+    selected_assessment_id = st.selectbox(
+        "Assessment",
+        options=list(assessment_by_id),
+        format_func=lambda assessment_id: str(
+            assessment_by_id[assessment_id]["name"]
+        ),
+    )
+
+    uploaded_files = st.file_uploader(
+        "Choose documents",
+        type=["pdf", "txt", "md", "docx"],
+        accept_multiple_files=True,
+        help="Supported file types: PDF, TXT, Markdown, and Word documents.",
+    )
+
+    if st.button(
+        "Upload selected files",
+        type="primary",
+        disabled=not uploaded_files,
+    ):
+        uploaded_count = 0
+        for uploaded_file in uploaded_files:
+            try:
+                save_uploaded_document(
+                    selected_assessment_id,
+                    uploaded_file.name,
+                    uploaded_file.getvalue(),
+                )
+            except (OSError, ValueError) as error:
+                st.error(f"Could not upload {uploaded_file.name}: {error}")
+            else:
+                uploaded_count += 1
+
+        if uploaded_count:
+            st.success(f"Uploaded {uploaded_count} document(s).")
+
+    documents = list_documents(selected_assessment_id)
+    if documents:
+        st.markdown("#### Uploaded documents")
+        for document in documents:
+            size_kb = int(document["size_bytes"]) / 1024
+            st.write(f"📄 {document['filename']} · {size_kb:.1f} KB")
+    else:
+        st.info("No documents have been uploaded to this assessment yet.")
