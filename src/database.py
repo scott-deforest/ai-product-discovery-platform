@@ -62,6 +62,22 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS document_chunks (
+                id TEXT PRIMARY KEY,
+                document_id TEXT NOT NULL,
+                assessment_id TEXT NOT NULL,
+                chunk_index INTEGER NOT NULL,
+                content TEXT NOT NULL,
+                word_count INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE (document_id, chunk_index),
+                FOREIGN KEY (document_id) REFERENCES documents (id),
+                FOREIGN KEY (assessment_id) REFERENCES assessments (id)
+            )
+            """
+        )
 
 
 def create_assessment(
@@ -180,6 +196,10 @@ def save_document_extraction(
 
     with _connect(database_path) as connection:
         connection.execute(
+            "DELETE FROM document_chunks WHERE document_id = ?",
+            (document_id,),
+        )
+        connection.execute(
             """
             INSERT INTO document_extractions (
                 document_id, text_path, character_count, extracted_at
@@ -210,3 +230,65 @@ def get_document_extraction(
         ).fetchone()
 
     return dict(row) if row else None
+
+
+def replace_document_chunks(
+    document_id: str,
+    assessment_id: str,
+    chunks: list[str],
+    database_path: DatabasePath = DATABASE_PATH,
+) -> None:
+    """Replace all stored chunks for one document."""
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    with _connect(database_path) as connection:
+        connection.execute(
+            "DELETE FROM document_chunks WHERE document_id = ?",
+            (document_id,),
+        )
+        connection.executemany(
+            """
+            INSERT INTO document_chunks (
+                id,
+                document_id,
+                assessment_id,
+                chunk_index,
+                content,
+                word_count,
+                created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    f"{document_id}-chunk-{index}",
+                    document_id,
+                    assessment_id,
+                    index,
+                    content,
+                    len(content.split()),
+                    created_at,
+                )
+                for index, content in enumerate(chunks)
+            ],
+        )
+
+
+def list_document_chunks(
+    document_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[dict[str, object]]:
+    """Return a document's chunks in their original order."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, document_id, assessment_id, chunk_index, content,
+                   word_count, created_at
+            FROM document_chunks
+            WHERE document_id = ?
+            ORDER BY chunk_index
+            """,
+            (document_id,),
+        ).fetchall()
+
+    return [dict(row) for row in rows]

@@ -2,12 +2,15 @@
 
 import streamlit as st
 
+from src.chunking import chunk_text
 from src.database import (
     create_assessment,
     get_document_extraction,
     initialize_database,
     list_assessments,
+    list_document_chunks,
     list_documents,
+    replace_document_chunks,
 )
 from src.ingestion import (
     extract_and_save_document,
@@ -155,5 +158,46 @@ else:
                                 disabled=True,
                                 key=f"preview-{document_id}",
                             )
+
+                        chunks = list_document_chunks(document_id)
+                        chunk_button_label = (
+                            "Recreate chunks" if chunks else "Create chunks"
+                        )
+                        if st.button(
+                            chunk_button_label,
+                            key=f"chunk-{document_id}",
+                        ):
+                            chunks_to_save = chunk_text(extracted_text)
+                            replace_document_chunks(
+                                document_id=document_id,
+                                assessment_id=selected_assessment_id,
+                                chunks=chunks_to_save,
+                            )
+                            chunks = list_document_chunks(document_id)
+                            st.success(f"Created {len(chunks)} text chunk(s).")
+
+                        if chunks:
+                            st.caption(
+                                f"{len(chunks)} chunks · "
+                                "180 words maximum · 30-word overlap"
+                            )
+                            with st.expander("Preview chunks"):
+                                for chunk in chunks:
+                                    chunk_number = int(chunk["chunk_index"]) + 1
+                                    st.markdown(
+                                        f"**Chunk {chunk_number} · "
+                                        f"{chunk['word_count']} words**"
+                                    )
+                                    st.text_area(
+                                        f"Chunk {chunk_number} content",
+                                        value=str(chunk["content"]),
+                                        height=180,
+                                        disabled=True,
+                                        label_visibility="collapsed",
+                                        key=(
+                                            f"chunk-preview-{document_id}-"
+                                            f"{chunk_number}"
+                                        ),
+                                    )
     else:
         st.info("No documents have been uploaded to this assessment yet.")
