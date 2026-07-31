@@ -10,4 +10,6 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Copy `.env.example` to `.env`, then add your OpenAI API key when implementation begins.
+Copy `.env.example` to `.env`, then add your OpenAI API key. The default embedding
+model is `text-embedding-3-small`; it can be changed with
+`OPENAI_EMBEDDING_MODEL`.

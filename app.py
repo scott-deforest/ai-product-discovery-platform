@@ -17,6 +17,12 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
+from src.vector_store import (
+    count_indexed_document_chunks,
+    delete_document_vectors,
+    index_document_chunks,
+    search_assessment,
+)
 
 
 st.set_page_config(
@@ -136,6 +142,7 @@ else:
                             f"Could not extract {document['filename']}: {error}"
                         )
                     else:
+                        delete_document_vectors(document_id)
                         st.success(f"Extracted text from {document['filename']}.")
                         extraction = get_document_extraction(document_id)
 
@@ -173,6 +180,7 @@ else:
                                 assessment_id=selected_assessment_id,
                                 chunks=chunks_to_save,
                             )
+                            delete_document_vectors(document_id)
                             chunks = list_document_chunks(document_id)
                             st.success(f"Created {len(chunks)} text chunk(s).")
 
@@ -199,5 +207,77 @@ else:
                                             f"{chunk_number}"
                                         ),
                                     )
+
+                            indexed_count = count_indexed_document_chunks(
+                                document_id
+                            )
+                            index_button_label = (
+                                "Re-index chunks"
+                                if indexed_count
+                                else "Index chunks"
+                            )
+                            if st.button(
+                                index_button_label,
+                                key=f"index-{document_id}",
+                            ):
+                                try:
+                                    indexed_count = index_document_chunks(
+                                        chunks,
+                                        filename=str(document["filename"]),
+                                    )
+                                except Exception as error:
+                                    st.error(
+                                        f"Could not index chunks: {error}"
+                                    )
+                                else:
+                                    st.success(
+                                        f"Indexed {indexed_count} chunk(s)."
+                                    )
+
+                            if indexed_count:
+                                st.caption(
+                                    f"{indexed_count} chunk vectors indexed"
+                                )
     else:
         st.info("No documents have been uploaded to this assessment yet.")
+
+    indexed_document_count = sum(
+        count_indexed_document_chunks(str(document["id"]))
+        for document in documents
+    )
+    if indexed_document_count:
+        st.divider()
+        st.subheader("Search assessment evidence")
+        st.write(
+            "Ask a question to retrieve the most relevant source chunks from "
+            "this assessment."
+        )
+        search_query = st.text_input(
+            "Search question",
+            placeholder="What problems slow down customer support?",
+        )
+
+        if st.button("Search evidence", disabled=not search_query.strip()):
+            try:
+                search_results = search_assessment(
+                    search_query,
+                    selected_assessment_id,
+                )
+            except Exception as error:
+                st.error(f"Could not search the assessment: {error}")
+            else:
+                if not search_results:
+                    st.info("No relevant chunks were found.")
+                for result_number, result in enumerate(search_results, start=1):
+                    metadata = result["metadata"]
+                    similarity_percent = float(result["similarity"]) * 100
+                    with st.container(border=True):
+                        st.markdown(
+                            f"**Result {result_number} · "
+                            f"{similarity_percent:.1f}% similarity**"
+                        )
+                        st.caption(
+                            f"{metadata['filename']} · "
+                            f"Chunk {int(metadata['chunk_index']) + 1}"
+                        )
+                        st.write(result["content"])
