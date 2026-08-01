@@ -116,3 +116,5 @@ tests/                         Automated tests
 
 Sprint 2 will build an evidence-grounded assessment workflow on top of retrieved
 chunks, while keeping source traceability and human review central to the product.
+See the [Sprint 2 outline](docs/SPRINT_2.md) for the planned workflow, scoring
+rubric, implementation packages, and public-preview acceptance criteria.
