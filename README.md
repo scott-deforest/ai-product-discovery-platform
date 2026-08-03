@@ -200,5 +200,8 @@ assessment roles, stronger evaluation, and explicit human review actions. See th
 
 ## License
 
-A public-release license has not yet been selected. Until one is added, the
-repository remains all rights reserved.
+Copyright © 2026 Scott DeForest. All rights reserved.
+
+The source is available for portfolio evaluation and demonstration. No license
+for reuse, modification, or distribution is granted. See the full
+[copyright notice](COPYRIGHT.md).
