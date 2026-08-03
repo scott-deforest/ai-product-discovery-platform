@@ -12,6 +12,7 @@ from src.assessment_runner import (
     build_evidence_pack,
     check_assessment_readiness,
     generate_opportunity_analysis,
+    run_assessment,
     start_assessment_run,
 )
 from src.database import (
@@ -19,6 +20,7 @@ from src.database import (
     create_document,
     get_assessment_run,
     initialize_database,
+    list_assessment_runs,
     list_document_chunks,
     replace_document_chunks,
 )
@@ -187,6 +189,74 @@ class AssessmentReadinessTests(unittest.TestCase):
             len(evidence_pack.items[0].dimensions),
             len(EVIDENCE_QUERIES),
         )
+
+    def test_failed_generation_leaves_a_persisted_failed_run(self) -> None:
+        create_document(
+            document_id="document-1",
+            assessment_id=self.assessment_id,
+            filename="workflow.md",
+            stored_path="/tmp/workflow.md",
+            file_type="md",
+            size_bytes=42,
+            database_path=self.database_path,
+        )
+        replace_document_chunks(
+            document_id="document-1",
+            assessment_id=self.assessment_id,
+            chunks=["Specialists repeatedly search several systems."],
+            database_path=self.database_path,
+        )
+        chunk = list_document_chunks("document-1", self.database_path)[0]
+        self.collection.upsert(
+            ids=[str(chunk["id"])],
+            embeddings=[[1.0, 0.0]],
+            documents=[str(chunk["content"])],
+            metadatas=[
+                {
+                    "assessment_id": self.assessment_id,
+                    "document_id": "document-1",
+                    "filename": "workflow.md",
+                    "chunk_index": 0,
+                }
+            ],
+        )
+        evidence_pack = EvidencePack(
+            assessment_id=self.assessment_id,
+            items=[
+                EvidenceItem(
+                    citation_id="E1",
+                    chunk_id=str(chunk["id"]),
+                    document_id="document-1",
+                    filename="workflow.md",
+                    chunk_index=0,
+                    content=str(chunk["content"]),
+                    dimensions=[AssessmentDimension.WORKFLOW_PAIN_POINTS],
+                    similarity=0.8,
+                )
+            ],
+        )
+        fake_client = SimpleNamespace(
+            responses=SimpleNamespace(
+                parse=lambda **kwargs: (_ for _ in ()).throw(
+                    RuntimeError("Synthetic model failure")
+                )
+            )
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "Synthetic model failure"):
+            run_assessment(
+                evidence_pack,
+                "Customer Support Workflow",
+                database_path=self.database_path,
+                collection=self.collection,
+                openai_client=fake_client,
+                model="test-model",
+            )
+
+        runs = list_assessment_runs(self.assessment_id, self.database_path)
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["status"], RunStatus.FAILED.value)
+        self.assertEqual(runs[0]["error_message"], "Synthetic model failure")
 
 
 class OpportunityGenerationTests(unittest.TestCase):

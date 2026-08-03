@@ -7,7 +7,7 @@ import streamlit as st
 from src.assessment_runner import (
     build_evidence_pack,
     check_assessment_readiness,
-    generate_opportunity_analysis,
+    run_assessment,
 )
 from src.chunking import chunk_text
 from src.database import (
@@ -24,7 +24,7 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
-from src.models import AssessmentResult, EvidencePack
+from src.models import CompletedAssessment, EvidencePack
 from src.vector_store import (
     count_indexed_document_chunks,
     delete_document_vectors,
@@ -307,6 +307,7 @@ else:
             "embeddings API."
         )
         evidence_state_key = f"evidence-pack-{selected_assessment_id}"
+        result_state_key = f"opportunity-result-{selected_assessment_id}"
 
         if st.button("Preview assessment evidence"):
             try:
@@ -325,6 +326,7 @@ else:
                 st.session_state[evidence_state_key] = evidence_pack.model_dump(
                     mode="json"
                 )
+                st.session_state.pop(result_state_key, None)
 
         stored_evidence_pack = st.session_state.get(evidence_state_key)
         if stored_evidence_pack:
@@ -347,17 +349,16 @@ else:
                     )
                     st.write(item.content)
 
-            st.markdown("#### Generate opportunity preview")
+            st.markdown("#### Run assessment")
             st.write(
                 "The AI will analyze only the evidence shown above. Every suggested "
                 "opportunity must cite at least one of those sources."
             )
-            result_state_key = f"opportunity-result-{selected_assessment_id}"
-            if st.button("Generate opportunities", type="primary"):
+            if st.button("Run and save assessment", type="primary"):
                 selected_assessment = assessment_by_id[selected_assessment_id]
                 try:
                     with st.spinner("Analyzing evidence for AI opportunities..."):
-                        assessment_result = generate_opportunity_analysis(
+                        completed_assessment = run_assessment(
                             evidence_pack=evidence_pack,
                             assessment_name=str(selected_assessment["name"]),
                             assessment_description=str(
@@ -366,29 +367,42 @@ else:
                         )
                 except Exception:
                     LOGGER.exception(
-                        "opportunity_preview_failed assessment_id=%s",
+                        "assessment_run_ui_failed assessment_id=%s",
                         selected_assessment_id,
                     )
                     st.error(
-                        "We couldn't generate the opportunity preview. Your "
+                        "We couldn't complete the assessment. Your "
                         "documents and evidence are safe. Check the app logs for "
                         "technical details, then try again."
                     )
                 else:
-                    st.session_state[result_state_key] = assessment_result.model_dump(
-                        mode="json"
+                    st.session_state[result_state_key] = (
+                        completed_assessment.model_dump(mode="json")
                     )
 
             stored_result = st.session_state.get(result_state_key)
+            if stored_result and "run_id" not in stored_result:
+                st.session_state.pop(result_state_key, None)
+                stored_result = None
+                st.info(
+                    "Scoring and saved reports were just added. Run the assessment "
+                    "again to create the ranked version."
+                )
             if stored_result:
-                assessment_result = AssessmentResult.model_validate(stored_result)
-                st.markdown("#### Opportunity preview")
-                st.info(assessment_result.executive_summary)
-                for opportunity in assessment_result.opportunities:
+                completed_assessment = CompletedAssessment.model_validate(
+                    stored_result
+                )
+                st.markdown("#### Ranked opportunities")
+                st.success("Assessment completed and saved.")
+                st.info(completed_assessment.executive_summary)
+                for opportunity in completed_assessment.opportunities:
                     with st.container(border=True):
-                        st.markdown(f"**{opportunity.title}**")
+                        st.markdown(
+                            f"**#{opportunity.rank} · {opportunity.title}**"
+                        )
                         st.write(opportunity.summary)
                         st.caption(
+                            f"Overall score: {opportunity.composite_score:.2f} / 5 · "
                             "Sources: " + ", ".join(opportunity.citation_ids)
                         )
                         with st.expander("Review recommendation details"):
@@ -408,3 +422,14 @@ else:
                                 "**What we still need to learn:** "
                                 + "; ".join(opportunity.missing_information)
                             )
+                            st.markdown("**Component scores**")
+                            for label, score_detail in (
+                                ("Business value", opportunity.business_value),
+                                ("Feasibility", opportunity.feasibility),
+                                ("Evidence strength", opportunity.evidence_strength),
+                                ("Risk readiness", opportunity.risk_readiness),
+                            ):
+                                st.write(
+                                    f"{label}: {score_detail.score}/5 — "
+                                    f"{score_detail.rationale}"
+                                )

@@ -196,6 +196,8 @@ Acceptance criteria:
 - Display run status and recoverable errors.
 - Present an executive summary and ranked opportunity cards.
 - Show scores, safeguards, success metrics, and expandable citations.
+- Translate composite scores into plain-language decision bands so users can
+  understand what a score means without interpreting the formula themselves.
 - Preserve existing ingestion controls without overwhelming the report view.
 
 Acceptance criteria:
@@ -203,6 +205,8 @@ Acceptance criteria:
 - A user can move from indexed documents to a completed report without using the
   terminal.
 - Every opportunity visibly links to supporting evidence.
+- Every composite score includes a plain-language interpretation and makes clear
+  that it is a decision aid, not an approval to implement.
 - Previously completed reports reload from SQLite without another API call.
 
 ### Work package 6: Employer-preview hardening

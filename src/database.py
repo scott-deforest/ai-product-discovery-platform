@@ -1,5 +1,6 @@
 """Assessment, document, and analysis-run persistence."""
 
+import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -7,7 +8,7 @@ from typing import Optional, Union
 from uuid import uuid4
 
 from src.config import DATABASE_PATH
-from src.models import RunStatus
+from src.models import AssessmentResult, RankedOpportunity, RunStatus
 
 
 DatabasePath = Union[str, Path]
@@ -92,6 +93,7 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
                 started_at TEXT,
                 completed_at TEXT,
                 error_message TEXT,
+                executive_summary TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (assessment_id) REFERENCES assessments (id)
             )
@@ -167,6 +169,14 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
             ON opportunities (run_id)
             """
         )
+        run_columns = {
+            str(row["name"])
+            for row in connection.execute("PRAGMA table_info(assessment_runs)")
+        }
+        if "executive_summary" not in run_columns:
+            connection.execute(
+                "ALTER TABLE assessment_runs ADD COLUMN executive_summary TEXT"
+            )
 
 
 def create_assessment(
@@ -464,7 +474,8 @@ def get_assessment_run(
         row = connection.execute(
             """
             SELECT id, assessment_id, status, model, prompt_version,
-                   started_at, completed_at, error_message, created_at
+                   started_at, completed_at, error_message, executive_summary,
+                   created_at
             FROM assessment_runs
             WHERE id = ?
             """,
@@ -472,6 +483,26 @@ def get_assessment_run(
         ).fetchone()
 
     return dict(row) if row else None
+
+
+def list_assessment_runs(
+    assessment_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[dict[str, object]]:
+    """Return an assessment's runs, newest first."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, assessment_id, status, model, prompt_version,
+                   started_at, completed_at, error_message, executive_summary,
+                   created_at
+            FROM assessment_runs
+            WHERE assessment_id = ?
+            ORDER BY created_at DESC
+            """,
+            (assessment_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def transition_assessment_run(
@@ -533,3 +564,175 @@ def transition_assessment_run(
                 run_id,
             ),
         )
+
+
+def save_assessment_result(
+    run_id: str,
+    result: AssessmentResult,
+    ranked_opportunities: list[RankedOpportunity],
+    database_path: DatabasePath = DATABASE_PATH,
+) -> None:
+    """Atomically save ranked opportunities, citations, and run completion."""
+    if len(ranked_opportunities) != len(result.opportunities):
+        raise ValueError("Every generated opportunity must be ranked before saving.")
+
+    expected_ranks = list(range(1, len(ranked_opportunities) + 1))
+    actual_ranks = [opportunity.rank for opportunity in ranked_opportunities]
+    if actual_ranks != expected_ranks:
+        raise ValueError("Opportunity ranks must be consecutive and start at one.")
+
+    citations_by_id = {
+        citation.citation_id: citation for citation in result.evidence
+    }
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    with _connect(database_path) as connection:
+        run = connection.execute(
+            "SELECT status FROM assessment_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise ValueError(f"Assessment run not found: {run_id}.")
+        if RunStatus(run["status"]) != RunStatus.RUNNING:
+            raise ValueError("Only a running assessment can save results.")
+
+        existing_count = connection.execute(
+            "SELECT COUNT(*) AS count FROM opportunities WHERE run_id = ?",
+            (run_id,),
+        ).fetchone()["count"]
+        if existing_count:
+            raise ValueError("This assessment run already has saved opportunities.")
+
+        for opportunity in ranked_opportunities:
+            opportunity_id = str(uuid4())
+            connection.execute(
+                """
+                INSERT INTO opportunities (
+                    id, run_id, rank, title, summary, problem,
+                    proposed_capability, primary_users_json, workflow_placement,
+                    expected_value, data_requirements_json, risks_json,
+                    safeguards_json, success_metrics_json,
+                    missing_information_json, business_value_score,
+                    business_value_rationale, feasibility_score,
+                    feasibility_rationale, evidence_strength_score,
+                    evidence_strength_rationale, risk_readiness_score,
+                    risk_readiness_rationale, composite_score, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                        ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    opportunity_id,
+                    run_id,
+                    opportunity.rank,
+                    opportunity.title,
+                    opportunity.summary,
+                    opportunity.problem,
+                    opportunity.proposed_capability,
+                    json.dumps(opportunity.primary_users),
+                    opportunity.workflow_placement,
+                    opportunity.expected_value,
+                    json.dumps(opportunity.data_requirements),
+                    json.dumps(opportunity.risks),
+                    json.dumps(opportunity.safeguards),
+                    json.dumps(opportunity.success_metrics),
+                    json.dumps(opportunity.missing_information),
+                    opportunity.business_value.score,
+                    opportunity.business_value.rationale,
+                    opportunity.feasibility.score,
+                    opportunity.feasibility.rationale,
+                    opportunity.evidence_strength.score,
+                    opportunity.evidence_strength.rationale,
+                    opportunity.risk_readiness.score,
+                    opportunity.risk_readiness.rationale,
+                    opportunity.composite_score,
+                    created_at,
+                ),
+            )
+            for citation_id in opportunity.citation_ids:
+                citation = citations_by_id[citation_id]
+                connection.execute(
+                    """
+                    INSERT INTO opportunity_evidence (
+                        id, opportunity_id, citation_id, document_id, chunk_id,
+                        filename, chunk_index, excerpt
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        str(uuid4()),
+                        opportunity_id,
+                        citation.citation_id,
+                        citation.document_id,
+                        citation.chunk_id,
+                        citation.filename,
+                        citation.chunk_index,
+                        citation.excerpt,
+                    ),
+                )
+
+        connection.execute(
+            """
+            UPDATE assessment_runs
+            SET status = ?, completed_at = ?, error_message = NULL,
+                executive_summary = ?
+            WHERE id = ?
+            """,
+            (
+                RunStatus.COMPLETED.value,
+                created_at,
+                result.executive_summary,
+                run_id,
+            ),
+        )
+
+
+def list_run_opportunities(
+    run_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[dict[str, object]]:
+    """Return one run's saved opportunities in ranked order."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunities
+            WHERE run_id = ?
+            ORDER BY rank, title
+            """,
+            (run_id,),
+        ).fetchall()
+
+    list_fields = {
+        "primary_users_json": "primary_users",
+        "data_requirements_json": "data_requirements",
+        "risks_json": "risks",
+        "safeguards_json": "safeguards",
+        "success_metrics_json": "success_metrics",
+        "missing_information_json": "missing_information",
+    }
+    opportunities = []
+    for row in rows:
+        opportunity = dict(row)
+        for stored_name, public_name in list_fields.items():
+            opportunity[public_name] = json.loads(opportunity.pop(stored_name))
+        opportunities.append(opportunity)
+    return opportunities
+
+
+def list_opportunity_evidence(
+    opportunity_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[dict[str, object]]:
+    """Return the saved source citations for one opportunity."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT citation_id, document_id, chunk_id, filename, chunk_index,
+                   excerpt
+            FROM opportunity_evidence
+            WHERE opportunity_id = ?
+            ORDER BY citation_id
+            """,
+            (opportunity_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]

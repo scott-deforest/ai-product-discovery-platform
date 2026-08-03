@@ -155,3 +155,21 @@ class AssessmentResult(BaseModel):
                     f"Opportunity references unknown citation IDs: {unknown_list}."
                 )
         return self
+
+
+class RankedOpportunity(OpportunityResult):
+    """An opportunity with a deterministic application score and rank."""
+
+    rank: int = Field(ge=1)
+    composite_score: float = Field(ge=1.0, le=5.0)
+
+
+class CompletedAssessment(BaseModel):
+    """A generated assessment after scoring and persistence."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    run_id: str = Field(min_length=1)
+    executive_summary: str = Field(min_length=1)
+    evidence: list[EvidenceCitation] = Field(min_length=1)
+    opportunities: list[RankedOpportunity] = Field(min_length=1)

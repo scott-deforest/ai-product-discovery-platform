@@ -12,19 +12,26 @@ from src.database import (
     create_assessment_run,
     get_assessment,
     list_documents,
+    save_assessment_result,
     transition_assessment_run,
 )
 from src.models import (
     AssessmentDimension,
     AssessmentReadiness,
     AssessmentResult,
+    CompletedAssessment,
     EvidenceCitation,
     EvidenceItem,
     EvidencePack,
     OpportunityAnalysis,
     RunStatus,
 )
-from src.prompts.opportunity_analysis import SYSTEM_PROMPT, build_analysis_prompt
+from src.prompts.opportunity_analysis import (
+    PROMPT_VERSION,
+    SYSTEM_PROMPT,
+    build_analysis_prompt,
+)
+from src.reporting import rank_opportunities
 from src.vector_store import count_indexed_assessment_chunks, search_assessment
 
 
@@ -288,3 +295,66 @@ def generate_opportunity_analysis(
         len(result.opportunities),
     )
     return result
+
+
+def run_assessment(
+    evidence_pack: EvidencePack,
+    assessment_name: str,
+    assessment_description: str = "",
+    database_path: DatabasePath = DATABASE_PATH,
+    collection=None,
+    openai_client=None,
+    model: Optional[str] = None,
+) -> CompletedAssessment:
+    """Generate, score, and atomically save one recoverable assessment run."""
+    active_model = model or analysis_model()
+    run_id = start_assessment_run(
+        assessment_id=evidence_pack.assessment_id,
+        model=active_model,
+        prompt_version=PROMPT_VERSION,
+        database_path=database_path,
+        collection=collection,
+    )
+
+    try:
+        result = generate_opportunity_analysis(
+            evidence_pack=evidence_pack,
+            assessment_name=assessment_name,
+            assessment_description=assessment_description,
+            openai_client=openai_client,
+            model=active_model,
+        )
+        ranked_opportunities = rank_opportunities(result.opportunities)
+        save_assessment_result(
+            run_id,
+            result,
+            ranked_opportunities,
+            database_path,
+        )
+    except Exception as error:
+        LOGGER.exception(
+            "assessment_run_failed assessment_id=%s run_id=%s model=%s",
+            evidence_pack.assessment_id,
+            run_id,
+            active_model,
+        )
+        transition_assessment_run(
+            run_id,
+            RunStatus.FAILED,
+            error_message=str(error) or type(error).__name__,
+            database_path=database_path,
+        )
+        raise
+
+    LOGGER.info(
+        "assessment_run_completed assessment_id=%s run_id=%s opportunities=%d",
+        evidence_pack.assessment_id,
+        run_id,
+        len(ranked_opportunities),
+    )
+    return CompletedAssessment(
+        run_id=run_id,
+        executive_summary=result.executive_summary,
+        evidence=result.evidence,
+        opportunities=ranked_opportunities,
+    )
