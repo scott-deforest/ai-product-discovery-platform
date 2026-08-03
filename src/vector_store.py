@@ -94,6 +94,19 @@ def count_indexed_document_chunks(
     return len(result["ids"])
 
 
+def count_indexed_assessment_chunks(
+    assessment_id: str,
+    collection=None,
+) -> int:
+    """Count vectors available to an assessment-scoped retrieval."""
+    active_collection = collection or get_collection()
+    result = active_collection.get(
+        where={"assessment_id": assessment_id},
+        include=[],
+    )
+    return len(result["ids"])
+
+
 def delete_document_vectors(document_id: str, collection=None) -> None:
     """Remove stale vectors after extraction or chunking changes."""
     active_collection = collection or get_collection()
