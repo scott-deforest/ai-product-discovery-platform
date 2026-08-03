@@ -4,7 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from src.assessment_runner import check_assessment_readiness, start_assessment_run
+from src.assessment_runner import (
+    EVIDENCE_QUERIES,
+    build_evidence_pack,
+    check_assessment_readiness,
+    start_assessment_run,
+)
 from src.database import (
     create_assessment,
     create_document,
@@ -41,7 +46,7 @@ class AssessmentReadinessTests(unittest.TestCase):
 
         self.assertFalse(readiness.ready)
         self.assertEqual(readiness.document_count, 0)
-        self.assertIn("Upload at least one document.", readiness.reasons)
+        self.assertIn("needs at least one document", readiness.reasons[0])
 
         with self.assertRaisesRegex(ValueError, "Assessment is not ready"):
             start_assessment_run(
@@ -103,6 +108,74 @@ class AssessmentReadinessTests(unittest.TestCase):
 
         self.assertEqual(run["status"], RunStatus.RUNNING.value)
         self.assertIsNotNone(run["started_at"])
+
+    def test_evidence_pack_deduplicates_chunks_across_dimensions(self) -> None:
+        create_document(
+            document_id="document-1",
+            assessment_id=self.assessment_id,
+            filename="workflow.md",
+            stored_path="/tmp/workflow.md",
+            file_type="md",
+            size_bytes=42,
+            database_path=self.database_path,
+        )
+        replace_document_chunks(
+            document_id="document-1",
+            assessment_id=self.assessment_id,
+            chunks=["Specialists repeatedly search several systems."],
+            database_path=self.database_path,
+        )
+        chunk = list_document_chunks("document-1", self.database_path)[0]
+        self.collection.upsert(
+            ids=[str(chunk["id"])],
+            embeddings=[[1.0, 0.0]],
+            documents=[str(chunk["content"])],
+            metadatas=[
+                {
+                    "assessment_id": self.assessment_id,
+                    "document_id": "document-1",
+                    "filename": "workflow.md",
+                    "chunk_index": 0,
+                }
+            ],
+        )
+
+        search_calls = []
+
+        def fake_search(**kwargs):
+            search_calls.append(kwargs)
+            return [
+                {
+                    "chunk_id": str(chunk["id"]),
+                    "content": str(chunk["content"]),
+                    "metadata": {
+                        "assessment_id": self.assessment_id,
+                        "document_id": "document-1",
+                        "filename": "workflow.md",
+                        "chunk_index": 0,
+                    },
+                    "distance": 0.2,
+                    "similarity": 0.8,
+                }
+            ]
+
+        evidence_pack = build_evidence_pack(
+            self.assessment_id,
+            self.database_path,
+            self.collection,
+            search_fn=fake_search,
+        )
+
+        self.assertEqual(len(search_calls), len(EVIDENCE_QUERIES))
+        self.assertTrue(
+            all(call["assessment_id"] == self.assessment_id for call in search_calls)
+        )
+        self.assertEqual(len(evidence_pack.items), 1)
+        self.assertEqual(evidence_pack.items[0].citation_id, "E1")
+        self.assertEqual(
+            len(evidence_pack.items[0].dimensions),
+            len(EVIDENCE_QUERIES),
+        )
 
 
 if __name__ == "__main__":

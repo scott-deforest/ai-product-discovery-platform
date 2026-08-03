@@ -14,6 +14,15 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
+class AssessmentDimension(str, Enum):
+    """Evidence lenses used by the opportunity-assessment workflow."""
+
+    WORKFLOW_PAIN_POINTS = "workflow_pain_points"
+    DATA_TECHNICAL_READINESS = "data_technical_readiness"
+    BUSINESS_VALUE = "business_value"
+    RISK_HUMAN_OVERSIGHT = "risk_human_oversight"
+
+
 class AssessmentReadiness(BaseModel):
     """Explain whether an assessment has enough indexed evidence to run."""
 
@@ -47,6 +56,40 @@ class EvidenceCitation(BaseModel):
     filename: str = Field(min_length=1)
     chunk_index: int = Field(ge=0)
     excerpt: str = Field(min_length=1)
+
+
+class EvidenceItem(BaseModel):
+    """One deduplicated source chunk in an inspectable evidence pack."""
+
+    model_config = ConfigDict(frozen=True, str_strip_whitespace=True)
+
+    citation_id: str = Field(min_length=1)
+    chunk_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    filename: str = Field(min_length=1)
+    chunk_index: int = Field(ge=0)
+    content: str = Field(min_length=1)
+    dimensions: list[AssessmentDimension] = Field(min_length=1)
+    similarity: float = Field(ge=0.0, le=1.0)
+
+
+class EvidencePack(BaseModel):
+    """Assessment-scoped source material prepared for structured analysis."""
+
+    model_config = ConfigDict(frozen=True)
+
+    assessment_id: str = Field(min_length=1)
+    items: list[EvidenceItem] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def evidence_identifiers_must_be_unique(self) -> "EvidencePack":
+        citation_ids = [item.citation_id for item in self.items]
+        chunk_ids = [item.chunk_id for item in self.items]
+        if len(citation_ids) != len(set(citation_ids)):
+            raise ValueError("Evidence-pack citation IDs must be unique.")
+        if len(chunk_ids) != len(set(chunk_ids)):
+            raise ValueError("Evidence-pack chunk IDs must be unique.")
+        return self
 
 
 class OpportunityResult(BaseModel):

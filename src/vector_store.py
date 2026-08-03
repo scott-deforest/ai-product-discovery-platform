@@ -137,15 +137,18 @@ def search_assessment(
     documents = (result.get("documents") or [[]])[0]
     metadatas = (result.get("metadatas") or [[]])[0]
     distances = (result.get("distances") or [[]])[0]
+    chunk_ids = (result.get("ids") or [[]])[0]
 
     return [
         {
+            "chunk_id": chunk_id,
             "content": document,
             "metadata": metadata,
             "distance": distance,
             "similarity": max(0.0, 1.0 - float(distance)),
         }
-        for document, metadata, distance in zip(
+        for chunk_id, document, metadata, distance in zip(
+            chunk_ids,
             documents,
             metadatas,
             distances,

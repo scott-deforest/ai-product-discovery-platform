@@ -109,6 +109,7 @@ class VectorStoreTests(unittest.TestCase):
         )
 
         self.assertTrue(results)
+        self.assertTrue(all(result["chunk_id"] for result in results))
         self.assertTrue(
             all(
                 result["metadata"]["assessment_id"] == "assessment-1"

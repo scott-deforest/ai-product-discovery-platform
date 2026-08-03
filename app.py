@@ -1,7 +1,10 @@
 """Streamlit entry point for the AI Product Discovery Platform."""
 
+import logging
+
 import streamlit as st
 
+from src.assessment_runner import build_evidence_pack, check_assessment_readiness
 from src.chunking import chunk_text
 from src.database import (
     create_assessment,
@@ -17,12 +20,16 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
+from src.models import EvidencePack
 from src.vector_store import (
     count_indexed_document_chunks,
     delete_document_vectors,
     index_document_chunks,
     search_assessment,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 st.set_page_config(
@@ -281,3 +288,57 @@ else:
                             f"Chunk {int(metadata['chunk_index']) + 1}"
                         )
                         st.write(result["content"])
+
+    st.divider()
+    st.subheader("Prepare assessment analysis")
+    readiness = check_assessment_readiness(selected_assessment_id)
+
+    if not readiness.ready:
+        for reason in readiness.reasons:
+            st.info(reason)
+    else:
+        st.success("The documents are prepared for assessment analysis.")
+        st.caption(
+            "Previewing evidence runs four semantic searches and uses the OpenAI "
+            "embeddings API."
+        )
+        evidence_state_key = f"evidence-pack-{selected_assessment_id}"
+
+        if st.button("Preview assessment evidence"):
+            try:
+                with st.spinner("Preparing source evidence..."):
+                    evidence_pack = build_evidence_pack(selected_assessment_id)
+            except Exception:
+                LOGGER.exception(
+                    "evidence_pack_preview_failed assessment_id=%s",
+                    selected_assessment_id,
+                )
+                st.error(
+                    "We couldn't prepare the evidence preview. Your documents are "
+                    "safe. Check the app logs for technical details and try again."
+                )
+            else:
+                st.session_state[evidence_state_key] = evidence_pack.model_dump(
+                    mode="json"
+                )
+
+        stored_evidence_pack = st.session_state.get(evidence_state_key)
+        if stored_evidence_pack:
+            evidence_pack = EvidencePack.model_validate(stored_evidence_pack)
+            st.markdown(f"#### Evidence preview · {len(evidence_pack.items)} sources")
+
+            for item in evidence_pack.items:
+                dimension_labels = ", ".join(
+                    dimension.value.replace("_", " ").title()
+                    for dimension in item.dimensions
+                )
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{item.citation_id} · {item.filename} · "
+                        f"Chunk {item.chunk_index + 1}**"
+                    )
+                    st.caption(
+                        f"Supports: {dimension_labels} · Retrieval similarity: "
+                        f"{item.similarity * 100:.1f}% (not confidence)"
+                    )
+                    st.write(item.content)
