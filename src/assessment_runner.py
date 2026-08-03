@@ -3,7 +3,9 @@
 import logging
 from typing import Callable, Optional
 
-from src.config import DATABASE_PATH
+from openai import OpenAI
+
+from src.config import DATABASE_PATH, analysis_model
 from src.database import (
     DatabasePath,
     count_assessment_chunks,
@@ -15,10 +17,14 @@ from src.database import (
 from src.models import (
     AssessmentDimension,
     AssessmentReadiness,
+    AssessmentResult,
+    EvidenceCitation,
     EvidenceItem,
     EvidencePack,
+    OpportunityAnalysis,
     RunStatus,
 )
+from src.prompts.opportunity_analysis import SYSTEM_PROMPT, build_analysis_prompt
 from src.vector_store import count_indexed_assessment_chunks, search_assessment
 
 
@@ -215,3 +221,70 @@ def build_evidence_pack(
         len(items),
     )
     return EvidencePack(assessment_id=assessment_id, items=items)
+
+
+def generate_opportunity_analysis(
+    evidence_pack: EvidencePack,
+    assessment_name: str,
+    assessment_description: str = "",
+    openai_client=None,
+    model: Optional[str] = None,
+) -> AssessmentResult:
+    """Generate validated opportunities and attach trusted source metadata."""
+    active_model = model or analysis_model()
+    client = openai_client or OpenAI()
+    LOGGER.info(
+        "opportunity_generation_started assessment_id=%s model=%s evidence=%d",
+        evidence_pack.assessment_id,
+        active_model,
+        len(evidence_pack.items),
+    )
+
+    response = client.responses.parse(
+        model=active_model,
+        reasoning={"effort": "medium"},
+        input=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": build_analysis_prompt(
+                    assessment_name,
+                    assessment_description,
+                    evidence_pack,
+                ),
+            },
+        ],
+        text_format=OpportunityAnalysis,
+    )
+    analysis = response.output_parsed
+    if analysis is None:
+        LOGGER.error(
+            "opportunity_generation_unparsed assessment_id=%s response_id=%s",
+            evidence_pack.assessment_id,
+            getattr(response, "id", None),
+        )
+        raise ValueError("The model did not return a usable structured analysis.")
+
+    citations = [
+        EvidenceCitation(
+            citation_id=item.citation_id,
+            document_id=item.document_id,
+            chunk_id=item.chunk_id,
+            filename=item.filename,
+            chunk_index=item.chunk_index,
+            excerpt=item.content,
+        )
+        for item in evidence_pack.items
+    ]
+    result = AssessmentResult(
+        executive_summary=analysis.executive_summary,
+        evidence=citations,
+        opportunities=analysis.opportunities,
+    )
+    LOGGER.info(
+        "opportunity_generation_completed assessment_id=%s model=%s opportunities=%d",
+        evidence_pack.assessment_id,
+        active_model,
+        len(result.opportunities),
+    )
+    return result

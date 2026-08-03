@@ -39,7 +39,7 @@ class AssessmentReadiness(BaseModel):
 class ScoreDetail(BaseModel):
     """One transparent component of the opportunity-scoring rubric."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     score: int = Field(ge=1, le=5)
     rationale: str = Field(min_length=1)
@@ -48,7 +48,7 @@ class ScoreDetail(BaseModel):
 class EvidenceCitation(BaseModel):
     """Stable evidence that maps a model claim back to a source chunk."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     citation_id: str = Field(min_length=1)
     document_id: str = Field(min_length=1)
@@ -95,7 +95,7 @@ class EvidencePack(BaseModel):
 class OpportunityResult(BaseModel):
     """A structured, reviewable AI opportunity recommendation."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     title: str = Field(min_length=1)
     summary: str = Field(min_length=1)
@@ -122,10 +122,19 @@ class OpportunityResult(BaseModel):
         return self
 
 
+class OpportunityAnalysis(BaseModel):
+    """Model-generated interpretation before trusted evidence is attached."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    executive_summary: str = Field(min_length=1)
+    opportunities: list[OpportunityResult] = Field(min_length=1, max_length=3)
+
+
 class AssessmentResult(BaseModel):
     """Complete structured output expected from the Sprint 2 analysis."""
 
-    model_config = ConfigDict(str_strip_whitespace=True)
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
     executive_summary: str = Field(min_length=1)
     evidence: list[EvidenceCitation] = Field(min_length=1)

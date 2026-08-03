@@ -3,11 +3,15 @@
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+
+from pydantic import ValidationError
 
 from src.assessment_runner import (
     EVIDENCE_QUERIES,
     build_evidence_pack,
     check_assessment_readiness,
+    generate_opportunity_analysis,
     start_assessment_run,
 )
 from src.database import (
@@ -18,7 +22,14 @@ from src.database import (
     list_document_chunks,
     replace_document_chunks,
 )
-from src.models import RunStatus
+from src.models import (
+    AssessmentDimension,
+    EvidenceItem,
+    EvidencePack,
+    OpportunityAnalysis,
+    RunStatus,
+)
+from src.prompts.opportunity_analysis import SYSTEM_PROMPT
 from src.vector_store import get_collection
 
 
@@ -176,6 +187,121 @@ class AssessmentReadinessTests(unittest.TestCase):
             len(evidence_pack.items[0].dimensions),
             len(EVIDENCE_QUERIES),
         )
+
+
+class OpportunityGenerationTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.evidence_pack = EvidencePack(
+            assessment_id="assessment-1",
+            items=[
+                EvidenceItem(
+                    citation_id="E1",
+                    chunk_id="chunk-1",
+                    document_id="document-1",
+                    filename="workflow.md",
+                    chunk_index=0,
+                    content="Specialists repeatedly search several systems.",
+                    dimensions=[AssessmentDimension.WORKFLOW_PAIN_POINTS],
+                    similarity=0.82,
+                )
+            ],
+        )
+
+    @staticmethod
+    def analysis(citation_id: str = "E1") -> OpportunityAnalysis:
+        score = {"score": 4, "rationale": "Supported by the supplied evidence."}
+        return OpportunityAnalysis.model_validate(
+            {
+                "executive_summary": "The workflow has a focused retrieval opportunity.",
+                "opportunities": [
+                    {
+                        "title": "Knowledge retrieval assistant",
+                        "summary": "Help specialists find relevant knowledge faster.",
+                        "problem": "Specialists repeatedly search several systems.",
+                        "proposed_capability": "Cited semantic knowledge retrieval.",
+                        "primary_users": ["Support specialists"],
+                        "workflow_placement": "Issue research",
+                        "expected_value": "Reduce repeated searches.",
+                        "data_requirements": ["Approved knowledge sources"],
+                        "risks": ["Outdated source material"],
+                        "safeguards": ["Show citations", "Human review"],
+                        "success_metrics": ["Median research time"],
+                        "missing_information": ["Current research-time baseline"],
+                        "business_value": score,
+                        "feasibility": score,
+                        "evidence_strength": score,
+                        "risk_readiness": score,
+                        "citation_ids": [citation_id],
+                    }
+                ],
+            }
+        )
+
+    def test_generation_uses_structured_output_and_attaches_trusted_evidence(
+        self,
+    ) -> None:
+        parse_calls = []
+
+        class FakeResponses:
+            def parse(inner_self, **kwargs):
+                parse_calls.append(kwargs)
+                return SimpleNamespace(
+                    id="response-1",
+                    output_parsed=self.analysis(),
+                )
+
+        fake_client = SimpleNamespace(responses=FakeResponses())
+        result = generate_opportunity_analysis(
+            evidence_pack=self.evidence_pack,
+            assessment_name="Customer Support Workflow",
+            assessment_description="Review the current workflow.",
+            openai_client=fake_client,
+            model="test-model",
+        )
+
+        self.assertEqual(parse_calls[0]["model"], "test-model")
+        self.assertEqual(parse_calls[0]["text_format"], OpportunityAnalysis)
+        self.assertEqual(parse_calls[0]["input"][0]["content"], SYSTEM_PROMPT)
+        self.assertIn("[E1]", parse_calls[0]["input"][1]["content"])
+        self.assertEqual(result.opportunities[0].citation_ids, ["E1"])
+        self.assertEqual(result.evidence[0].chunk_id, "chunk-1")
+        self.assertEqual(result.evidence[0].filename, "workflow.md")
+
+    def test_generation_rejects_an_invented_citation(self) -> None:
+        fake_client = SimpleNamespace(
+            responses=SimpleNamespace(
+                parse=lambda **kwargs: SimpleNamespace(
+                    id="response-2",
+                    output_parsed=self.analysis("UNKNOWN"),
+                )
+            )
+        )
+
+        with self.assertRaisesRegex(ValidationError, "unknown citation"):
+            generate_opportunity_analysis(
+                self.evidence_pack,
+                "Customer Support Workflow",
+                openai_client=fake_client,
+                model="test-model",
+            )
+
+    def test_generation_rejects_an_unparsed_response(self) -> None:
+        fake_client = SimpleNamespace(
+            responses=SimpleNamespace(
+                parse=lambda **kwargs: SimpleNamespace(
+                    id="response-3",
+                    output_parsed=None,
+                )
+            )
+        )
+
+        with self.assertRaisesRegex(ValueError, "usable structured analysis"):
+            generate_opportunity_analysis(
+                self.evidence_pack,
+                "Customer Support Workflow",
+                openai_client=fake_client,
+                model="test-model",
+            )
 
 
 if __name__ == "__main__":

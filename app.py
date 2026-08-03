@@ -4,7 +4,11 @@ import logging
 
 import streamlit as st
 
-from src.assessment_runner import build_evidence_pack, check_assessment_readiness
+from src.assessment_runner import (
+    build_evidence_pack,
+    check_assessment_readiness,
+    generate_opportunity_analysis,
+)
 from src.chunking import chunk_text
 from src.database import (
     create_assessment,
@@ -20,7 +24,7 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
-from src.models import EvidencePack
+from src.models import AssessmentResult, EvidencePack
 from src.vector_store import (
     count_indexed_document_chunks,
     delete_document_vectors,
@@ -342,3 +346,65 @@ else:
                         f"{item.similarity * 100:.1f}% (not confidence)"
                     )
                     st.write(item.content)
+
+            st.markdown("#### Generate opportunity preview")
+            st.write(
+                "The AI will analyze only the evidence shown above. Every suggested "
+                "opportunity must cite at least one of those sources."
+            )
+            result_state_key = f"opportunity-result-{selected_assessment_id}"
+            if st.button("Generate opportunities", type="primary"):
+                selected_assessment = assessment_by_id[selected_assessment_id]
+                try:
+                    with st.spinner("Analyzing evidence for AI opportunities..."):
+                        assessment_result = generate_opportunity_analysis(
+                            evidence_pack=evidence_pack,
+                            assessment_name=str(selected_assessment["name"]),
+                            assessment_description=str(
+                                selected_assessment["description"] or ""
+                            ),
+                        )
+                except Exception:
+                    LOGGER.exception(
+                        "opportunity_preview_failed assessment_id=%s",
+                        selected_assessment_id,
+                    )
+                    st.error(
+                        "We couldn't generate the opportunity preview. Your "
+                        "documents and evidence are safe. Check the app logs for "
+                        "technical details, then try again."
+                    )
+                else:
+                    st.session_state[result_state_key] = assessment_result.model_dump(
+                        mode="json"
+                    )
+
+            stored_result = st.session_state.get(result_state_key)
+            if stored_result:
+                assessment_result = AssessmentResult.model_validate(stored_result)
+                st.markdown("#### Opportunity preview")
+                st.info(assessment_result.executive_summary)
+                for opportunity in assessment_result.opportunities:
+                    with st.container(border=True):
+                        st.markdown(f"**{opportunity.title}**")
+                        st.write(opportunity.summary)
+                        st.caption(
+                            "Sources: " + ", ".join(opportunity.citation_ids)
+                        )
+                        with st.expander("Review recommendation details"):
+                            st.markdown(f"**Problem:** {opportunity.problem}")
+                            st.markdown(
+                                "**Proposed capability:** "
+                                f"{opportunity.proposed_capability}"
+                            )
+                            st.markdown(
+                                f"**Expected value:** {opportunity.expected_value}"
+                            )
+                            st.markdown(
+                                "**Safeguards:** "
+                                + "; ".join(opportunity.safeguards)
+                            )
+                            st.markdown(
+                                "**What we still need to learn:** "
+                                + "; ".join(opportunity.missing_information)
+                            )
