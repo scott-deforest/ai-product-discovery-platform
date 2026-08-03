@@ -3,7 +3,11 @@
 import unittest
 
 from src.models import OpportunityResult
-from src.reporting import composite_score, rank_opportunities
+from src.reporting import (
+    composite_score,
+    rank_opportunities,
+    score_interpretation,
+)
 
 
 def opportunity(title: str, business: int, feasibility: int, evidence: int, risk: int):
@@ -54,6 +58,20 @@ class OpportunityRankingTests(unittest.TestCase):
         ranked = rank_opportunities([beta, alpha])
 
         self.assertEqual([item.title for item in ranked], ["Alpha", "Beta"])
+
+    def test_composite_scores_have_plain_language_interpretations(self) -> None:
+        self.assertEqual(score_interpretation(1.0)[0], "Weak candidate")
+        self.assertEqual(score_interpretation(2.0)[0], "Limited potential")
+        self.assertEqual(score_interpretation(3.0)[0], "Worth exploring")
+        self.assertEqual(score_interpretation(4.1)[0], "Strong pilot candidate")
+        self.assertEqual(
+            score_interpretation(4.5)[0],
+            "High-priority validation candidate",
+        )
+
+    def test_score_interpretation_rejects_out_of_range_values(self) -> None:
+        with self.assertRaisesRegex(ValueError, "between 1 and 5"):
+            score_interpretation(5.1)
 
 
 if __name__ == "__main__":

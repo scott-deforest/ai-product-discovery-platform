@@ -1,6 +1,7 @@
 """Streamlit entry point for the AI Product Discovery Platform."""
 
 import logging
+from datetime import datetime
 
 import streamlit as st
 
@@ -14,9 +15,11 @@ from src.database import (
     create_assessment,
     get_document_extraction,
     initialize_database,
+    list_assessment_runs,
     list_assessments,
     list_document_chunks,
     list_documents,
+    load_completed_assessment,
     replace_document_chunks,
 )
 from src.ingestion import (
@@ -25,6 +28,7 @@ from src.ingestion import (
     save_uploaded_document,
 )
 from src.models import CompletedAssessment, EvidencePack
+from src.reporting import score_interpretation
 from src.vector_store import (
     count_indexed_document_chunks,
     delete_document_vectors,
@@ -34,6 +38,124 @@ from src.vector_store import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _render_list(items: list[str], empty_message: str) -> None:
+    """Render a readable list while handling model-declared empty sections."""
+    if items:
+        for item in items:
+            st.markdown(f"- {item}")
+    else:
+        st.write(empty_message)
+
+
+def _format_report_label(run: dict[str, object]) -> str:
+    """Create a human-readable label for a saved report version."""
+    completed_at = str(run["completed_at"] or run["created_at"])
+    try:
+        local_time = datetime.fromisoformat(completed_at).astimezone()
+    except ValueError:
+        return "Saved report"
+    return local_time.strftime("%b %-d, %Y at %-I:%M %p")
+
+
+def render_assessment_report(report: CompletedAssessment) -> None:
+    """Render a saved, evidence-linked assessment for human review."""
+    st.markdown("### Assessment report")
+    st.info(report.executive_summary)
+    st.caption(
+        "Scores compare opportunities across value, feasibility, evidence, and "
+        "risk readiness. They support human judgment; they are not implementation "
+        "approval or predicted ROI."
+    )
+    with st.expander("How to interpret the overall score"):
+        st.markdown(
+            """
+| Score | Interpretation |
+| --- | --- |
+| 1.00–1.49 | Weak candidate |
+| 1.50–2.49 | Limited potential |
+| 2.50–3.49 | Worth exploring |
+| 3.50–4.49 | Strong pilot candidate |
+| 4.50–5.00 | High-priority validation candidate |
+"""
+        )
+
+    evidence_by_id = {
+        citation.citation_id: citation for citation in report.evidence
+    }
+    for opportunity in report.opportunities:
+        interpretation, guidance = score_interpretation(
+            opportunity.composite_score
+        )
+        with st.container(border=True):
+            st.markdown(f"#### #{opportunity.rank} · {opportunity.title}")
+            score_column, interpretation_column = st.columns([1, 3])
+            score_column.metric(
+                "Overall score",
+                f"{opportunity.composite_score:.2f} / 5",
+            )
+            interpretation_column.markdown(f"**{interpretation}**")
+            interpretation_column.write(guidance)
+            st.write(opportunity.summary)
+            st.caption("Sources: " + ", ".join(opportunity.citation_ids))
+
+            with st.expander("Recommendation details"):
+                st.markdown(f"**Problem**  \n{opportunity.problem}")
+                st.markdown(
+                    f"**Proposed capability**  \n{opportunity.proposed_capability}"
+                )
+                st.markdown(
+                    f"**Primary users**  \n{', '.join(opportunity.primary_users)}"
+                )
+                st.markdown(
+                    f"**Workflow placement**  \n{opportunity.workflow_placement}"
+                )
+                st.markdown(f"**Expected value**  \n{opportunity.expected_value}")
+
+                st.markdown("**Data and dependencies**")
+                _render_list(
+                    opportunity.data_requirements,
+                    "No specific data requirements were identified.",
+                )
+                st.markdown("**Material risks**")
+                _render_list(opportunity.risks, "No material risks were identified.")
+                st.markdown("**Safeguards and human oversight**")
+                _render_list(
+                    opportunity.safeguards,
+                    "No safeguards were identified.",
+                )
+                st.markdown("**Suggested success measures**")
+                _render_list(
+                    opportunity.success_metrics,
+                    "No success measures were identified.",
+                )
+                st.markdown("**What we still need to learn**")
+                _render_list(
+                    opportunity.missing_information,
+                    "No evidence gaps were identified.",
+                )
+
+            with st.expander("Why it received this score"):
+                for label, weight, score_detail in (
+                    ("Business value", "35%", opportunity.business_value),
+                    ("Feasibility", "25%", opportunity.feasibility),
+                    ("Evidence strength", "25%", opportunity.evidence_strength),
+                    ("Risk readiness", "15%", opportunity.risk_readiness),
+                ):
+                    st.markdown(
+                        f"**{label}: {score_detail.score}/5 · {weight} of overall**"
+                    )
+                    st.write(score_detail.rationale)
+
+            with st.expander("Review supporting evidence"):
+                for citation_id in opportunity.citation_ids:
+                    citation = evidence_by_id[citation_id]
+                    st.markdown(
+                        f"**{citation.citation_id} · {citation.filename} · "
+                        f"Chunk {citation.chunk_index + 1}**"
+                    )
+                    st.write(citation.excerpt)
 
 
 st.set_page_config(
@@ -87,8 +209,8 @@ else:
             )
 
     st.divider()
-    st.subheader("Upload documents")
-    st.write("Choose the assessment these documents should belong to.")
+    st.subheader("Assessment workspace")
+    st.write("Choose the assessment you want to review or continue working on.")
 
     assessment_by_id = {
         str(assessment["id"]): assessment for assessment in assessments
@@ -100,6 +222,63 @@ else:
             assessment_by_id[assessment_id]["name"]
         ),
     )
+
+    assessment_runs = list_assessment_runs(selected_assessment_id)
+    displayed_report_run_id = None
+    if assessment_runs and assessment_runs[0]["status"] == "failed":
+        latest_failed_run = assessment_runs[0]
+        LOGGER.warning(
+            "latest_assessment_run_failed assessment_id=%s run_id=%s error=%s",
+            selected_assessment_id,
+            latest_failed_run["id"],
+            latest_failed_run["error_message"],
+        )
+        st.warning(
+            "The most recent assessment attempt did not finish. Your source "
+            "documents are safe, and you can run it again when ready."
+        )
+
+    completed_runs = [
+        run for run in assessment_runs if run["status"] == "completed"
+    ]
+    if completed_runs:
+        st.divider()
+        st.subheader("Saved reports")
+        completed_runs_by_id = {
+            str(run["id"]): run for run in completed_runs
+        }
+        report_selection_key = f"saved-report-selection-{selected_assessment_id}"
+        preferred_report_key = f"preferred-report-{selected_assessment_id}"
+        preferred_report_id = st.session_state.pop(preferred_report_key, None)
+        if preferred_report_id in completed_runs_by_id:
+            st.session_state[report_selection_key] = preferred_report_id
+        selected_run_id = st.selectbox(
+            "Report version",
+            options=list(completed_runs_by_id),
+            format_func=lambda run_id: _format_report_label(
+                completed_runs_by_id[run_id]
+            ),
+            key=report_selection_key,
+        )
+        try:
+            saved_report = load_completed_assessment(selected_run_id)
+        except (ValueError, TypeError):
+            LOGGER.exception(
+                "saved_report_load_failed assessment_id=%s run_id=%s",
+                selected_assessment_id,
+                selected_run_id,
+            )
+            st.error(
+                "We couldn't open this saved report. Your source documents are "
+                "safe. Check the app logs for technical details."
+            )
+        else:
+            displayed_report_run_id = selected_run_id
+            render_assessment_report(saved_report)
+
+    st.divider()
+    st.subheader("Source documents")
+    st.write("Upload and prepare the evidence for this assessment.")
 
     uploaded_files = st.file_uploader(
         "Choose documents",
@@ -379,6 +558,9 @@ else:
                     st.session_state[result_state_key] = (
                         completed_assessment.model_dump(mode="json")
                     )
+                    st.session_state[
+                        f"preferred-report-{selected_assessment_id}"
+                    ] = completed_assessment.run_id
 
             stored_result = st.session_state.get(result_state_key)
             if stored_result and "run_id" not in stored_result:
@@ -392,44 +574,8 @@ else:
                 completed_assessment = CompletedAssessment.model_validate(
                     stored_result
                 )
-                st.markdown("#### Ranked opportunities")
-                st.success("Assessment completed and saved.")
-                st.info(completed_assessment.executive_summary)
-                for opportunity in completed_assessment.opportunities:
-                    with st.container(border=True):
-                        st.markdown(
-                            f"**#{opportunity.rank} · {opportunity.title}**"
-                        )
-                        st.write(opportunity.summary)
-                        st.caption(
-                            f"Overall score: {opportunity.composite_score:.2f} / 5 · "
-                            "Sources: " + ", ".join(opportunity.citation_ids)
-                        )
-                        with st.expander("Review recommendation details"):
-                            st.markdown(f"**Problem:** {opportunity.problem}")
-                            st.markdown(
-                                "**Proposed capability:** "
-                                f"{opportunity.proposed_capability}"
-                            )
-                            st.markdown(
-                                f"**Expected value:** {opportunity.expected_value}"
-                            )
-                            st.markdown(
-                                "**Safeguards:** "
-                                + "; ".join(opportunity.safeguards)
-                            )
-                            st.markdown(
-                                "**What we still need to learn:** "
-                                + "; ".join(opportunity.missing_information)
-                            )
-                            st.markdown("**Component scores**")
-                            for label, score_detail in (
-                                ("Business value", opportunity.business_value),
-                                ("Feasibility", opportunity.feasibility),
-                                ("Evidence strength", opportunity.evidence_strength),
-                                ("Risk readiness", opportunity.risk_readiness),
-                            ):
-                                st.write(
-                                    f"{label}: {score_detail.score}/5 — "
-                                    f"{score_detail.rationale}"
-                                )
+                if completed_assessment.run_id == displayed_report_run_id:
+                    st.session_state.pop(result_state_key, None)
+                else:
+                    st.success("Assessment completed and saved.")
+                    render_assessment_report(completed_assessment)

@@ -10,6 +10,14 @@ SCORE_WEIGHTS = {
     "risk_readiness": 0.15,
 }
 
+SCORE_BANDS = (
+    (1.5, "Weak candidate", "The evidence does not currently support prioritizing it."),
+    (2.5, "Limited potential", "Important value, feasibility, evidence, or risk gaps remain."),
+    (3.5, "Worth exploring", "It merits further discovery before a pilot decision."),
+    (4.5, "Strong pilot candidate", "It is a good candidate for a bounded, measured pilot."),
+    (5.01, "High-priority validation candidate", "Validate assumptions and safeguards promptly."),
+)
+
 
 def composite_score(opportunity: OpportunityResult) -> float:
     """Apply the published four-part rubric on the original 1–5 scale."""
@@ -18,6 +26,16 @@ def composite_score(opportunity: OpportunityResult) -> float:
         for dimension, weight in SCORE_WEIGHTS.items()
     )
     return round(score, 2)
+
+
+def score_interpretation(score: float) -> tuple[str, str]:
+    """Translate a 1–5 composite score into non-directive decision guidance."""
+    if score < 1.0 or score > 5.0:
+        raise ValueError("Composite score must be between 1 and 5.")
+    for upper_bound, label, guidance in SCORE_BANDS:
+        if score < upper_bound:
+            return label, guidance
+    raise AssertionError("Score bands do not cover the valid score range.")
 
 
 def rank_opportunities(

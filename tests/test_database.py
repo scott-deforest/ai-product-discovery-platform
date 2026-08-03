@@ -14,6 +14,7 @@ from src.database import (
     list_opportunity_evidence,
     list_run_opportunities,
     list_documents,
+    load_completed_assessment,
     replace_document_chunks,
     save_assessment_result,
     transition_assessment_run,
@@ -246,6 +247,16 @@ class AssessmentDatabaseTests(unittest.TestCase):
             ["Support specialists"],
         )
         self.assertEqual(saved_evidence[0]["citation_id"], "E1")
+
+        reloaded_report = load_completed_assessment(run_id, self.database_path)
+        self.assertEqual(reloaded_report.run_id, run_id)
+        self.assertEqual(len(reloaded_report.opportunities), 1)
+        self.assertEqual(
+            reloaded_report.opportunities[0].title,
+            "Knowledge retrieval assistant",
+        )
+        self.assertEqual(reloaded_report.opportunities[0].citation_ids, ["E1"])
+        self.assertEqual(reloaded_report.evidence[0].chunk_id, "document-1-chunk-0")
 
 
 if __name__ == "__main__":

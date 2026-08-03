@@ -8,7 +8,14 @@ from typing import Optional, Union
 from uuid import uuid4
 
 from src.config import DATABASE_PATH
-from src.models import AssessmentResult, RankedOpportunity, RunStatus
+from src.models import (
+    AssessmentResult,
+    CompletedAssessment,
+    EvidenceCitation,
+    RankedOpportunity,
+    RunStatus,
+    ScoreDetail,
+)
 
 
 DatabasePath = Union[str, Path]
@@ -736,3 +743,74 @@ def list_opportunity_evidence(
             (opportunity_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def load_completed_assessment(
+    run_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> CompletedAssessment:
+    """Rebuild a completed report entirely from persisted data."""
+    run = get_assessment_run(run_id, database_path)
+    if run is None:
+        raise ValueError(f"Assessment run not found: {run_id}.")
+    if run["status"] != RunStatus.COMPLETED.value:
+        raise ValueError("Only completed assessment runs have a report.")
+    if not run["executive_summary"]:
+        raise ValueError("The completed assessment is missing its summary.")
+
+    saved_opportunities = list_run_opportunities(run_id, database_path)
+    if not saved_opportunities:
+        raise ValueError("The completed assessment has no saved opportunities.")
+
+    citations_by_id: dict[str, EvidenceCitation] = {}
+    ranked_opportunities = []
+    for saved in saved_opportunities:
+        citations = list_opportunity_evidence(str(saved["id"]), database_path)
+        citation_ids = []
+        for citation_data in citations:
+            citation = EvidenceCitation.model_validate(citation_data)
+            citations_by_id[citation.citation_id] = citation
+            citation_ids.append(citation.citation_id)
+
+        ranked_opportunities.append(
+            RankedOpportunity(
+                rank=int(saved["rank"]),
+                composite_score=float(saved["composite_score"]),
+                title=str(saved["title"]),
+                summary=str(saved["summary"]),
+                problem=str(saved["problem"]),
+                proposed_capability=str(saved["proposed_capability"]),
+                primary_users=list(saved["primary_users"]),
+                workflow_placement=str(saved["workflow_placement"]),
+                expected_value=str(saved["expected_value"]),
+                data_requirements=list(saved["data_requirements"]),
+                risks=list(saved["risks"]),
+                safeguards=list(saved["safeguards"]),
+                success_metrics=list(saved["success_metrics"]),
+                missing_information=list(saved["missing_information"]),
+                business_value=ScoreDetail(
+                    score=int(saved["business_value_score"]),
+                    rationale=str(saved["business_value_rationale"]),
+                ),
+                feasibility=ScoreDetail(
+                    score=int(saved["feasibility_score"]),
+                    rationale=str(saved["feasibility_rationale"]),
+                ),
+                evidence_strength=ScoreDetail(
+                    score=int(saved["evidence_strength_score"]),
+                    rationale=str(saved["evidence_strength_rationale"]),
+                ),
+                risk_readiness=ScoreDetail(
+                    score=int(saved["risk_readiness_score"]),
+                    rationale=str(saved["risk_readiness_rationale"]),
+                ),
+                citation_ids=citation_ids,
+            )
+        )
+
+    return CompletedAssessment(
+        run_id=run_id,
+        executive_summary=str(run["executive_summary"]),
+        evidence=list(citations_by_id.values()),
+        opportunities=ranked_opportunities,
+    )
