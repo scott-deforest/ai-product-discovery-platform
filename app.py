@@ -19,8 +19,11 @@ from src.database import (
     list_assessments,
     list_document_chunks,
     list_documents,
+    list_latest_opportunity_reviews,
+    list_opportunity_review_history,
     load_completed_assessment,
     replace_document_chunks,
+    save_opportunity_review,
 )
 from src.ingestion import (
     extract_and_save_document,
@@ -28,7 +31,7 @@ from src.ingestion import (
     save_uploaded_document,
 )
 from src.evaluation import evaluate_report_structure
-from src.models import CompletedAssessment, EvidencePack
+from src.models import CompletedAssessment, EvidencePack, ReviewDecision
 from src.reporting import score_interpretation
 from src.vector_store import (
     count_indexed_document_chunks,
@@ -39,6 +42,13 @@ from src.vector_store import (
 
 
 LOGGER = logging.getLogger(__name__)
+
+REVIEW_DECISION_LABELS = {
+    ReviewDecision.ADVANCE.value: "Advance to validation",
+    ReviewDecision.NEEDS_EVIDENCE.value: "Needs more evidence",
+    ReviewDecision.DEFER.value: "Defer",
+    ReviewDecision.REJECT.value: "Reject",
+}
 
 
 def _render_list(items: list[str], empty_message: str) -> None:
@@ -88,6 +98,96 @@ def render_automatic_evaluation(report: CompletedAssessment) -> None:
             st.markdown(f"{status_icon} **{check.label}**")
             if not check.passed:
                 st.caption(f"How to improve: {check.guidance}")
+
+
+def _format_review_time(reviewed_at: str) -> str:
+    """Format a stored UTC review timestamp for the local interface."""
+    try:
+        return datetime.fromisoformat(reviewed_at).astimezone().strftime(
+            "%b %-d, %Y at %-I:%M %p"
+        )
+    except ValueError:
+        return "Saved previously"
+
+
+def render_human_review(
+    report: CompletedAssessment,
+    opportunity_rank: int,
+) -> None:
+    """Capture the accountable human decision for one generated opportunity."""
+    reviews_by_rank = {
+        review.opportunity_rank: review
+        for review in list_latest_opportunity_reviews(report.run_id)
+    }
+    current_review = reviews_by_rank.get(opportunity_rank)
+
+    st.markdown("**Human review decision**")
+    st.caption(
+        "The AI proposes this opportunity. A person decides whether it should "
+        "move forward and records why."
+    )
+    if current_review:
+        st.info(
+            f"Current decision: "
+            f"{REVIEW_DECISION_LABELS[current_review.decision.value]}"
+        )
+        st.caption(
+            f"Saved {_format_review_time(current_review.reviewed_at)} · "
+            f"Revision {current_review.revision}"
+        )
+        with st.expander(
+            f"View saved decision note · Revision {current_review.revision}"
+        ):
+            st.write(current_review.note)
+
+    decision_options = [""] + list(REVIEW_DECISION_LABELS)
+    current_decision = current_review.decision.value if current_review else ""
+    with st.form(
+        f"human-review-{report.run_id}-{opportunity_rank}",
+        border=False,
+    ):
+        selected_decision = st.selectbox(
+            "Decision",
+            options=decision_options,
+            index=decision_options.index(current_decision),
+            format_func=lambda value: (
+                REVIEW_DECISION_LABELS[value]
+                if value
+                else "Choose a decision"
+            ),
+        )
+        review_note = st.text_area(
+            "Decision note",
+            value=current_review.note if current_review else "",
+            placeholder=(
+                "Explain the evidence, uncertainty, or constraint behind your decision."
+            ),
+        )
+        save_review = st.form_submit_button("Save decision")
+
+    if save_review:
+        try:
+            save_opportunity_review(
+                run_id=report.run_id,
+                opportunity_rank=opportunity_rank,
+                decision=selected_decision,
+                note=review_note,
+            )
+        except ValueError as error:
+            st.error(str(error))
+        else:
+            st.success("Your review decision was saved.")
+
+    history = list_opportunity_review_history(report.run_id, opportunity_rank)
+    if len(history) > 1:
+        with st.expander(f"View full decision history · {len(history)} revisions"):
+            for review in history:
+                st.markdown(
+                    f"**Revision {review.revision} · "
+                    f"{REVIEW_DECISION_LABELS[review.decision.value]}**"
+                )
+                st.caption(_format_review_time(review.reviewed_at))
+                st.write(review.note)
 
 
 def render_assessment_report(report: CompletedAssessment) -> None:
@@ -189,6 +289,9 @@ def render_assessment_report(report: CompletedAssessment) -> None:
                         f"Chunk {citation.chunk_index + 1}**"
                     )
                     st.write(citation.excerpt)
+
+            st.divider()
+            render_human_review(report, opportunity.rank)
 
 
 st.set_page_config(

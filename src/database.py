@@ -1,6 +1,7 @@
-"""Assessment, document, and analysis-run persistence."""
+"""Assessment, document, analysis-run, and human-review persistence."""
 
 import json
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,13 +13,16 @@ from src.models import (
     AssessmentResult,
     CompletedAssessment,
     EvidenceCitation,
+    OpportunityReview,
     RankedOpportunity,
+    ReviewDecision,
     RunStatus,
     ScoreDetail,
 )
 
 
 DatabasePath = Union[str, Path]
+LOGGER = logging.getLogger(__name__)
 
 
 def _connect(database_path: DatabasePath) -> sqlite3.Connection:
@@ -166,6 +170,23 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS opportunity_reviews (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                opportunity_rank INTEGER NOT NULL CHECK (opportunity_rank >= 1),
+                decision TEXT NOT NULL CHECK (
+                    decision IN ('advance', 'needs_evidence', 'defer', 'reject')
+                ),
+                note TEXT NOT NULL,
+                revision INTEGER NOT NULL CHECK (revision >= 1),
+                reviewed_at TEXT NOT NULL,
+                UNIQUE (run_id, opportunity_rank, revision),
+                FOREIGN KEY (run_id) REFERENCES assessment_runs (id)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_assessment_runs_assessment_id
             ON assessment_runs (assessment_id, created_at)
             """
@@ -174,6 +195,12 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_opportunities_run_id
             ON opportunities (run_id)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_opportunity_reviews_run_rank
+            ON opportunity_reviews (run_id, opportunity_rank, revision)
             """
         )
         run_columns = {
@@ -743,6 +770,148 @@ def list_opportunity_evidence(
             (opportunity_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def save_opportunity_review(
+    run_id: str,
+    opportunity_rank: int,
+    decision: Union[ReviewDecision, str],
+    note: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> OpportunityReview:
+    """Append a validated human decision without overwriting prior revisions."""
+    try:
+        validated_decision = ReviewDecision(decision)
+    except ValueError as error:
+        raise ValueError("Choose a valid review decision.") from error
+
+    clean_note = note.strip()
+    if not clean_note:
+        raise ValueError("Add a short note explaining your decision.")
+    if opportunity_rank < 1:
+        raise ValueError("Opportunity rank must be at least one.")
+
+    review_id = str(uuid4())
+    reviewed_at = datetime.now(timezone.utc).isoformat()
+    with _connect(database_path) as connection:
+        run = connection.execute(
+            "SELECT status FROM assessment_runs WHERE id = ?",
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise ValueError(f"Assessment run not found: {run_id}.")
+        if run["status"] != RunStatus.COMPLETED.value:
+            raise ValueError("Only a completed report can receive a review decision.")
+
+        opportunity = connection.execute(
+            """
+            SELECT id FROM opportunities
+            WHERE run_id = ? AND rank = ?
+            """,
+            (run_id, opportunity_rank),
+        ).fetchone()
+        if opportunity is None:
+            raise ValueError("The selected opportunity does not exist in this report.")
+
+        latest_revision = connection.execute(
+            """
+            SELECT COALESCE(MAX(revision), 0) AS revision
+            FROM opportunity_reviews
+            WHERE run_id = ? AND opportunity_rank = ?
+            """,
+            (run_id, opportunity_rank),
+        ).fetchone()
+        revision = int(latest_revision["revision"]) + 1
+        connection.execute(
+            """
+            INSERT INTO opportunity_reviews (
+                id, run_id, opportunity_rank, decision, note, revision, reviewed_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                review_id,
+                run_id,
+                opportunity_rank,
+                validated_decision.value,
+                clean_note,
+                revision,
+                reviewed_at,
+            ),
+        )
+
+    LOGGER.info(
+        "opportunity_review_saved run_id=%s rank=%d decision=%s revision=%d",
+        run_id,
+        opportunity_rank,
+        validated_decision.value,
+        revision,
+    )
+    return OpportunityReview(
+        review_id=review_id,
+        run_id=run_id,
+        opportunity_rank=opportunity_rank,
+        decision=validated_decision,
+        note=clean_note,
+        revision=revision,
+        reviewed_at=reviewed_at,
+    )
+
+
+def list_latest_opportunity_reviews(
+    run_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[OpportunityReview]:
+    """Return the newest human decision for each opportunity in a report."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT reviews.*
+            FROM opportunity_reviews AS reviews
+            JOIN (
+                SELECT opportunity_rank, MAX(revision) AS latest_revision
+                FROM opportunity_reviews
+                WHERE run_id = ?
+                GROUP BY opportunity_rank
+            ) AS latest
+              ON reviews.opportunity_rank = latest.opportunity_rank
+             AND reviews.revision = latest.latest_revision
+            WHERE reviews.run_id = ?
+            ORDER BY reviews.opportunity_rank
+            """,
+            (run_id, run_id),
+        ).fetchall()
+    return [_opportunity_review_from_row(row) for row in rows]
+
+
+def list_opportunity_review_history(
+    run_id: str,
+    opportunity_rank: int,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[OpportunityReview]:
+    """Return every saved revision for one opportunity, newest first."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM opportunity_reviews
+            WHERE run_id = ? AND opportunity_rank = ?
+            ORDER BY revision DESC
+            """,
+            (run_id, opportunity_rank),
+        ).fetchall()
+    return [_opportunity_review_from_row(row) for row in rows]
+
+
+def _opportunity_review_from_row(row: sqlite3.Row) -> OpportunityReview:
+    return OpportunityReview(
+        review_id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        opportunity_rank=int(row["opportunity_rank"]),
+        decision=ReviewDecision(str(row["decision"])),
+        note=str(row["note"]),
+        revision=int(row["revision"]),
+        reviewed_at=str(row["reviewed_at"]),
+    )
 
 
 def load_completed_assessment(

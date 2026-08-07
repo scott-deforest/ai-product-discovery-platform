@@ -30,6 +30,7 @@ single-user. It is a portfolio demonstration, not a production SaaS product.
 - Transparent, deterministic scoring instead of an unexplained model ranking.
 - Human-review safeguards, plain-language errors, and technical operational logs.
 - Automatic report checks that distinguish structural completeness from human judgment.
+- Persistent human decisions with explanatory notes and revision history.
 - Migration-safe SQLite persistence and automated tests that do not spend API
   credits.
 
@@ -42,7 +43,8 @@ single-user. It is a portfolio demonstration, not a production SaaS product.
 5. Run the AI assessment using only the displayed evidence.
 6. Review ranked opportunities, score rationales, risks, safeguards, evidence
    gaps, success measures, and exact source excerpts.
-7. Reopen any saved report without making another OpenAI request.
+7. Advance, request more evidence, defer, or reject each opportunity and record why.
+8. Reopen any saved report and its human decisions without making another OpenAI request.
 
 See the [sample assessment report](docs/SAMPLE_REPORT.md) for a compact example.
 
@@ -147,8 +149,9 @@ python -m unittest discover -s tests -v
 The test suite covers persistence, extraction, chunking, vector filtering,
 readiness rules, evidence deduplication, structured generation, citation
 validation, failure recovery, deterministic ranking, score interpretation, and
-saved-report reconstruction. Model and embedding clients are faked in automated
-tests, so the suite does not require an API key or spend API credits.
+saved-report reconstruction. It also verifies automatic report evaluation and
+append-only human decision history. Model and embedding clients are faked in
+automated tests, so the suite does not require an API key or spend API credits.
 
 GitHub Actions runs the same suite on every push and pull request.
 

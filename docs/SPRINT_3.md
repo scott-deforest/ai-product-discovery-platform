@@ -62,15 +62,17 @@ API credits.
 
 ## Stage 2: Human decision workflow
 
-Reviewers will be able to assign one decision to each opportunity:
+Reviewers can assign one decision to each opportunity:
 
 - Advance to validation
 - Needs more evidence
 - Defer
 - Reject
 
-A decision note will capture why the reviewer chose that status. The AI proposes;
-the human remains accountable for the product decision.
+A required decision note captures why the reviewer chose that status. Changed
+decisions create new revisions instead of overwriting earlier judgment, providing
+a local audit history. The AI proposes; the human remains accountable for the
+product decision.
 
 ## Stage 3: Specialist assessment
 

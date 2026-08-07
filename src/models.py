@@ -14,6 +14,15 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
+class ReviewDecision(str, Enum):
+    """Human decisions available for an AI-generated opportunity."""
+
+    ADVANCE = "advance"
+    NEEDS_EVIDENCE = "needs_evidence"
+    DEFER = "defer"
+    REJECT = "reject"
+
+
 class AssessmentDimension(str, Enum):
     """Evidence lenses used by the opportunity-assessment workflow."""
 
@@ -243,3 +252,17 @@ class EvaluationComparison(BaseModel):
     candidate_score: float = Field(ge=1.0, le=5.0)
     score_delta: float = Field(ge=-4.0, le=4.0)
     criterion_deltas: dict[str, int]
+
+
+class OpportunityReview(BaseModel):
+    """One persisted revision of a person's opportunity decision."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    review_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    opportunity_rank: int = Field(ge=1)
+    decision: ReviewDecision
+    note: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    reviewed_at: str = Field(min_length=1)
