@@ -209,6 +209,15 @@ class HumanEvaluation(BaseModel):
     notes: str = ""
 
 
+class SavedHumanEvaluation(HumanEvaluation):
+    """One immutable persisted revision of a report-level human evaluation."""
+
+    evaluation_id: str = Field(min_length=1)
+    run_id: str = Field(min_length=1)
+    revision: int = Field(ge=1)
+    evaluated_at: str = Field(min_length=1)
+
+
 class AutomatedEvaluationCheck(BaseModel):
     """One deterministic report-quality check with reviewer-facing guidance."""
 

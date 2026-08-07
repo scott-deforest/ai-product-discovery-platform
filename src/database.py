@@ -13,10 +13,13 @@ from src.models import (
     AssessmentResult,
     CompletedAssessment,
     EvidenceCitation,
+    EvaluationRating,
+    HumanEvaluation,
     OpportunityReview,
     RankedOpportunity,
     ReviewDecision,
     RunStatus,
+    SavedHumanEvaluation,
     ScoreDetail,
 )
 
@@ -187,6 +190,42 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
         )
         connection.execute(
             """
+            CREATE TABLE IF NOT EXISTS human_evaluations (
+                id TEXT PRIMARY KEY,
+                run_id TEXT NOT NULL,
+                case_id TEXT NOT NULL,
+                pipeline_version TEXT NOT NULL,
+                reviewer TEXT NOT NULL,
+                evidence_grounding_score INTEGER NOT NULL CHECK (
+                    evidence_grounding_score BETWEEN 1 AND 5
+                ),
+                evidence_grounding_rationale TEXT NOT NULL,
+                specificity_score INTEGER NOT NULL CHECK (
+                    specificity_score BETWEEN 1 AND 5
+                ),
+                specificity_rationale TEXT NOT NULL,
+                actionability_score INTEGER NOT NULL CHECK (
+                    actionability_score BETWEEN 1 AND 5
+                ),
+                actionability_rationale TEXT NOT NULL,
+                risk_awareness_score INTEGER NOT NULL CHECK (
+                    risk_awareness_score BETWEEN 1 AND 5
+                ),
+                risk_awareness_rationale TEXT NOT NULL,
+                decision_usefulness_score INTEGER NOT NULL CHECK (
+                    decision_usefulness_score BETWEEN 1 AND 5
+                ),
+                decision_usefulness_rationale TEXT NOT NULL,
+                notes TEXT NOT NULL DEFAULT '',
+                revision INTEGER NOT NULL CHECK (revision >= 1),
+                evaluated_at TEXT NOT NULL,
+                UNIQUE (run_id, revision),
+                FOREIGN KEY (run_id) REFERENCES assessment_runs (id)
+            )
+            """
+        )
+        connection.execute(
+            """
             CREATE INDEX IF NOT EXISTS idx_assessment_runs_assessment_id
             ON assessment_runs (assessment_id, created_at)
             """
@@ -201,6 +240,12 @@ def initialize_database(database_path: DatabasePath = DATABASE_PATH) -> None:
             """
             CREATE INDEX IF NOT EXISTS idx_opportunity_reviews_run_rank
             ON opportunity_reviews (run_id, opportunity_rank, revision)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_human_evaluations_run_revision
+            ON human_evaluations (run_id, revision)
             """
         )
         run_columns = {
@@ -911,6 +956,154 @@ def _opportunity_review_from_row(row: sqlite3.Row) -> OpportunityReview:
         note=str(row["note"]),
         revision=int(row["revision"]),
         reviewed_at=str(row["reviewed_at"]),
+    )
+
+
+def save_human_evaluation(
+    run_id: str,
+    evaluation: HumanEvaluation,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> SavedHumanEvaluation:
+    """Append a report-level human evaluation after verifying run metadata."""
+    evaluation_id = str(uuid4())
+    evaluated_at = datetime.now(timezone.utc).isoformat()
+
+    with _connect(database_path) as connection:
+        run = connection.execute(
+            """
+            SELECT assessment_id, status, prompt_version
+            FROM assessment_runs
+            WHERE id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if run is None:
+            raise ValueError(f"Assessment run not found: {run_id}.")
+        if run["status"] != RunStatus.COMPLETED.value:
+            raise ValueError("Only a completed report can receive a human evaluation.")
+        if evaluation.case_id != run["assessment_id"]:
+            raise ValueError("The evaluation does not belong to this assessment.")
+        if evaluation.pipeline_version != run["prompt_version"]:
+            raise ValueError("The evaluation does not match this pipeline version.")
+
+        latest_revision = connection.execute(
+            """
+            SELECT COALESCE(MAX(revision), 0) AS revision
+            FROM human_evaluations
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        revision = int(latest_revision["revision"]) + 1
+        connection.execute(
+            """
+            INSERT INTO human_evaluations (
+                id, run_id, case_id, pipeline_version, reviewer,
+                evidence_grounding_score, evidence_grounding_rationale,
+                specificity_score, specificity_rationale,
+                actionability_score, actionability_rationale,
+                risk_awareness_score, risk_awareness_rationale,
+                decision_usefulness_score, decision_usefulness_rationale,
+                notes, revision, evaluated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evaluation_id,
+                run_id,
+                evaluation.case_id,
+                evaluation.pipeline_version,
+                evaluation.reviewer,
+                evaluation.evidence_grounding.score,
+                evaluation.evidence_grounding.rationale,
+                evaluation.specificity.score,
+                evaluation.specificity.rationale,
+                evaluation.actionability.score,
+                evaluation.actionability.rationale,
+                evaluation.risk_awareness.score,
+                evaluation.risk_awareness.rationale,
+                evaluation.decision_usefulness.score,
+                evaluation.decision_usefulness.rationale,
+                evaluation.notes,
+                revision,
+                evaluated_at,
+            ),
+        )
+
+    LOGGER.info(
+        "human_evaluation_saved run_id=%s reviewer=%s revision=%d",
+        run_id,
+        evaluation.reviewer,
+        revision,
+    )
+    return SavedHumanEvaluation(
+        **evaluation.model_dump(),
+        evaluation_id=evaluation_id,
+        run_id=run_id,
+        revision=revision,
+        evaluated_at=evaluated_at,
+    )
+
+
+def get_latest_human_evaluation(
+    run_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> Optional[SavedHumanEvaluation]:
+    """Return the newest report-level evaluation when one has been saved."""
+    with _connect(database_path) as connection:
+        row = connection.execute(
+            """
+            SELECT * FROM human_evaluations
+            WHERE run_id = ?
+            ORDER BY revision DESC
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+    return _human_evaluation_from_row(row) if row else None
+
+
+def list_human_evaluation_history(
+    run_id: str,
+    database_path: DatabasePath = DATABASE_PATH,
+) -> list[SavedHumanEvaluation]:
+    """Return all report-level evaluation revisions, newest first."""
+    with _connect(database_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM human_evaluations
+            WHERE run_id = ?
+            ORDER BY revision DESC
+            """,
+            (run_id,),
+        ).fetchall()
+    return [_human_evaluation_from_row(row) for row in rows]
+
+
+def _human_evaluation_from_row(row: sqlite3.Row) -> SavedHumanEvaluation:
+    ratings = {
+        criterion: EvaluationRating(
+            score=int(row[f"{criterion}_score"]),
+            rationale=str(row[f"{criterion}_rationale"]),
+        )
+        for criterion in (
+            "evidence_grounding",
+            "specificity",
+            "actionability",
+            "risk_awareness",
+            "decision_usefulness",
+        )
+    }
+    return SavedHumanEvaluation(
+        evaluation_id=str(row["id"]),
+        run_id=str(row["run_id"]),
+        case_id=str(row["case_id"]),
+        pipeline_version=str(row["pipeline_version"]),
+        reviewer=str(row["reviewer"]),
+        notes=str(row["notes"]),
+        revision=int(row["revision"]),
+        evaluated_at=str(row["evaluated_at"]),
+        **ratings,
     )
 
 

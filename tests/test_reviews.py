@@ -8,19 +8,23 @@ from src.database import (
     create_assessment,
     create_assessment_run,
     create_document,
+    get_latest_human_evaluation,
     initialize_database,
+    list_human_evaluation_history,
     list_latest_opportunity_reviews,
     list_opportunity_review_history,
     replace_document_chunks,
     save_assessment_result,
+    save_human_evaluation,
     save_opportunity_review,
     transition_assessment_run,
 )
-from src.models import AssessmentResult, ReviewDecision, RunStatus
+from src.evaluation import score_human_evaluation
+from src.models import AssessmentResult, HumanEvaluation, ReviewDecision, RunStatus
 from src.reporting import rank_opportunities
 
 
-class OpportunityReviewTests(unittest.TestCase):
+class HumanReviewPersistenceTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.database_path = Path(self.temporary_directory.name) / "test.db"
@@ -175,6 +179,88 @@ class OpportunityReviewTests(unittest.TestCase):
                 99,
                 ReviewDecision.DEFER,
                 "This rank is not present.",
+                self.database_path,
+            )
+
+    def _human_evaluation(
+        self,
+        reviewer: str = "Scott DeForest",
+        score: int = 4,
+    ) -> HumanEvaluation:
+        rating = {
+            "score": score,
+            "rationale": "The report supports a focused product decision.",
+        }
+        return HumanEvaluation(
+            case_id=self._assessment_id_for_run(),
+            pipeline_version="v1",
+            reviewer=reviewer,
+            evidence_grounding=rating,
+            specificity=rating,
+            actionability=rating,
+            risk_awareness=rating,
+            decision_usefulness=rating,
+            notes="Review the baseline again after specialist analysis.",
+        )
+
+    def _assessment_id_for_run(self) -> str:
+        from src.database import get_assessment_run
+
+        run = get_assessment_run(self.run_id, self.database_path)
+        return str(run["assessment_id"])
+
+    def test_report_evaluation_is_persisted_with_its_rationales(self) -> None:
+        saved = save_human_evaluation(
+            self.run_id,
+            self._human_evaluation(),
+            self.database_path,
+        )
+
+        latest = get_latest_human_evaluation(
+            self.run_id,
+            self.database_path,
+        )
+
+        self.assertEqual(saved.revision, 1)
+        self.assertIsNotNone(latest)
+        self.assertEqual(latest.reviewer, "Scott DeForest")
+        self.assertEqual(latest.evidence_grounding.score, 4)
+        self.assertIn("focused product decision", latest.actionability.rationale)
+        self.assertEqual(score_human_evaluation(latest).overall_score, 4.0)
+
+    def test_changed_report_evaluation_preserves_revision_history(self) -> None:
+        save_human_evaluation(
+            self.run_id,
+            self._human_evaluation(score=3),
+            self.database_path,
+        )
+        updated = save_human_evaluation(
+            self.run_id,
+            self._human_evaluation(score=5),
+            self.database_path,
+        )
+
+        history = list_human_evaluation_history(
+            self.run_id,
+            self.database_path,
+        )
+
+        self.assertEqual(updated.revision, 2)
+        self.assertEqual([evaluation.revision for evaluation in history], [2, 1])
+        self.assertEqual(
+            [score_human_evaluation(item).overall_score for item in history],
+            [5.0, 3.0],
+        )
+
+    def test_report_evaluation_must_match_the_assessment_and_pipeline(self) -> None:
+        mismatched = self._human_evaluation().model_copy(
+            update={"pipeline_version": "different-pipeline"}
+        )
+
+        with self.assertRaisesRegex(ValueError, "pipeline version"):
+            save_human_evaluation(
+                self.run_id,
+                mismatched,
                 self.database_path,
             )
 

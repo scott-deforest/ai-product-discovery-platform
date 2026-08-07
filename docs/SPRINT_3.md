@@ -46,6 +46,10 @@ unsupported precision.
 Every score requires a written rationale. The aggregate score is a comparison aid,
 not an objective measure of truth and not a predicted business outcome.
 
+The application saves each completed rubric as a new revision, including the
+reviewer, criterion rationales, aggregate score, optional notes, and timestamp.
+Earlier evaluations remain available so changes in judgment are visible.
+
 ### Benchmark cases
 
 The first evaluation set will contain several synthetic workflows with different
@@ -98,6 +102,14 @@ Each benchmark case will be run through both pipelines. The comparison will show
 
 The specialist pipeline will be retained only if the measured benefit justifies
 its additional cost and complexity.
+
+## Deferred UI/UX sprint
+
+The current interface prioritizes functional transparency over visual polish. A
+future sprint will improve navigation, information hierarchy, report density,
+summary views, responsive behavior, and the visual distinction between generated
+analysis, human evaluation, and human decisions. That work is intentionally
+separate from validating the Sprint 3 decision workflow.
 
 ## Definition of done
 

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime
 
 import streamlit as st
+from pydantic import ValidationError
 
 from src.assessment_runner import (
     build_evidence_pack,
@@ -13,16 +14,20 @@ from src.assessment_runner import (
 from src.chunking import chunk_text
 from src.database import (
     create_assessment,
+    get_assessment_run,
     get_document_extraction,
+    get_latest_human_evaluation,
     initialize_database,
     list_assessment_runs,
     list_assessments,
     list_document_chunks,
     list_documents,
+    list_human_evaluation_history,
     list_latest_opportunity_reviews,
     list_opportunity_review_history,
     load_completed_assessment,
     replace_document_chunks,
+    save_human_evaluation,
     save_opportunity_review,
 )
 from src.ingestion import (
@@ -30,8 +35,14 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
-from src.evaluation import evaluate_report_structure
-from src.models import CompletedAssessment, EvidencePack, ReviewDecision
+from src.evaluation import evaluate_report_structure, score_human_evaluation
+from src.models import (
+    CompletedAssessment,
+    EvidencePack,
+    HumanEvaluation,
+    ReviewDecision,
+    SavedHumanEvaluation,
+)
 from src.reporting import score_interpretation
 from src.vector_store import (
     count_indexed_document_chunks,
@@ -49,6 +60,34 @@ REVIEW_DECISION_LABELS = {
     ReviewDecision.DEFER.value: "Defer",
     ReviewDecision.REJECT.value: "Reject",
 }
+
+HUMAN_EVALUATION_CRITERIA = (
+    (
+        "evidence_grounding",
+        "Evidence grounding",
+        "Do the cited sources meaningfully support the report's important claims?",
+    ),
+    (
+        "specificity",
+        "Specificity",
+        "Is the guidance tailored to this workflow, its users, data, and boundaries?",
+    ),
+    (
+        "actionability",
+        "Actionability",
+        "Could a team plan a bounded validation step from this report?",
+    ),
+    (
+        "risk_awareness",
+        "Risk awareness",
+        "Are material risks, safeguards, and human oversight handled concretely?",
+    ),
+    (
+        "decision_usefulness",
+        "Decision usefulness",
+        "Does the report help you advance, investigate, defer, or reject the ideas?",
+    ),
+)
 
 
 def _render_list(items: list[str], empty_message: str) -> None:
@@ -98,6 +137,156 @@ def render_automatic_evaluation(report: CompletedAssessment) -> None:
             st.markdown(f"{status_icon} **{check.label}**")
             if not check.passed:
                 st.caption(f"How to improve: {check.guidance}")
+
+
+def _render_saved_quality_evaluation(
+    evaluation: SavedHumanEvaluation,
+) -> None:
+    """Render the scores and rationales from one persisted human evaluation."""
+    score = score_human_evaluation(evaluation)
+    st.markdown(
+        f"**Reviewer quality score: {score.overall_score:.2f} / 5**"
+    )
+    st.caption(
+        f"Reviewed by {evaluation.reviewer} · "
+        f"{_format_review_time(evaluation.evaluated_at)} · "
+        f"Revision {evaluation.revision}"
+    )
+    for criterion_id, label, _question in HUMAN_EVALUATION_CRITERIA:
+        rating = getattr(evaluation, criterion_id)
+        st.markdown(f"**{label}: {rating.score}/5**")
+        st.write(rating.rationale)
+    if evaluation.notes:
+        st.markdown("**Additional notes**")
+        st.write(evaluation.notes)
+
+
+def render_human_quality_evaluation(report: CompletedAssessment) -> None:
+    """Capture a revisioned human assessment of the report's decision quality."""
+    run = get_assessment_run(report.run_id)
+    if run is None:
+        LOGGER.error("human_evaluation_run_missing run_id=%s", report.run_id)
+        st.error(
+            "We couldn't open the human evaluation for this report. "
+            "Check the app logs for technical details."
+        )
+        return
+
+    latest = get_latest_human_evaluation(report.run_id)
+    flash_key = f"human-evaluation-saved-{report.run_id}"
+
+    st.markdown("#### Human quality evaluation")
+    st.caption(
+        "Use this rubric to judge the report itself. This score comes from a "
+        "person—not the AI—and is separate from the score shown for each opportunity."
+    )
+    if st.session_state.pop(flash_key, False):
+        st.success("Your report evaluation was saved.")
+
+    with st.expander("How to use the 1–5 review scale"):
+        st.markdown(
+            """
+| Score | Meaning |
+| --- | --- |
+| 1 | Weak — the report does not meet the criterion. |
+| 2 | Limited — major problems remain. |
+| 3 | Useful with revision. |
+| 4 | Strong — only minor improvements are needed. |
+| 5 | Excellent — clear, persuasive, and ready to support a decision. |
+"""
+        )
+        st.caption(
+            "The five criteria are weighted equally. The result is a comparison "
+            "aid, not an objective measure of truth or a predicted business outcome."
+        )
+
+    if latest:
+        latest_score = score_human_evaluation(latest)
+        st.metric(
+            "Latest human quality score",
+            f"{latest_score.overall_score:.2f} / 5",
+        )
+        with st.expander(
+            f"View saved quality evaluation · Revision {latest.revision}"
+        ):
+            _render_saved_quality_evaluation(latest)
+
+    with st.expander(
+        "Evaluate this report" if latest is None else "Update this evaluation",
+        expanded=latest is None,
+    ):
+        with st.form(f"human-quality-evaluation-{report.run_id}", border=False):
+            reviewer = st.text_input(
+                "Reviewer name",
+                value=latest.reviewer if latest else "",
+                placeholder="Your name",
+            )
+            submitted_ratings = {}
+            for criterion_id, label, question in HUMAN_EVALUATION_CRITERIA:
+                current_rating = getattr(latest, criterion_id) if latest else None
+                st.markdown(f"**{label}**")
+                st.caption(question)
+                submitted_ratings[criterion_id] = {
+                    "score": st.slider(
+                        f"{label} score",
+                        min_value=1,
+                        max_value=5,
+                        value=current_rating.score if current_rating else 3,
+                        key=f"{report.run_id}-{criterion_id}-score",
+                    ),
+                    "rationale": st.text_area(
+                        f"Why did you give {label.lower()} this score?",
+                        value=current_rating.rationale if current_rating else "",
+                        placeholder="Describe what worked and what should improve.",
+                        key=f"{report.run_id}-{criterion_id}-rationale",
+                    ),
+                }
+            notes = st.text_area(
+                "Additional notes (optional)",
+                value=latest.notes if latest else "",
+                key=f"{report.run_id}-evaluation-notes",
+            )
+            save_evaluation = st.form_submit_button("Save report evaluation")
+
+        if save_evaluation:
+            try:
+                evaluation = HumanEvaluation(
+                    case_id=str(run["assessment_id"]),
+                    pipeline_version=str(run["prompt_version"]),
+                    reviewer=reviewer,
+                    notes=notes,
+                    **submitted_ratings,
+                )
+                save_human_evaluation(report.run_id, evaluation)
+            except ValidationError:
+                LOGGER.warning(
+                    "human_evaluation_validation_failed run_id=%s",
+                    report.run_id,
+                    exc_info=True,
+                )
+                st.error(
+                    "Complete your name and explain every score before saving "
+                    "the evaluation."
+                )
+            except Exception:
+                LOGGER.exception(
+                    "human_evaluation_save_failed run_id=%s",
+                    report.run_id,
+                )
+                st.error(
+                    "We couldn't save this evaluation. Your report is safe. "
+                    "Check the app logs for technical details and try again."
+                )
+            else:
+                st.session_state[flash_key] = True
+                st.rerun()
+
+    history = list_human_evaluation_history(report.run_id)
+    if len(history) > 1:
+        with st.expander(f"View evaluation history · {len(history)} revisions"):
+            for evaluation in history:
+                _render_saved_quality_evaluation(evaluation)
+                st.divider()
 
 
 def _format_review_time(reviewed_at: str) -> str:
@@ -213,6 +402,7 @@ def render_assessment_report(report: CompletedAssessment) -> None:
         )
 
     render_automatic_evaluation(report)
+    render_human_quality_evaluation(report)
 
     evidence_by_id = {
         citation.citation_id: citation for citation in report.evidence
