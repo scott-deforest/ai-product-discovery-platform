@@ -29,6 +29,7 @@ single-user. It is a portfolio demonstration, not a production SaaS product.
 - Assessment-scoped retrieval that prevents evidence crossing between projects.
 - Transparent, deterministic scoring instead of an unexplained model ranking.
 - Human-review safeguards, plain-language errors, and technical operational logs.
+- Automatic report checks that distinguish structural completeness from human judgment.
 - Migration-safe SQLite persistence and automated tests that do not spend API
   credits.
 

@@ -1,9 +1,12 @@
 """Evaluation tools for comparing assessment-pipeline quality."""
 
+from typing import Union
+
 from src.models import (
     AssessmentResult,
     AutomatedEvaluation,
     AutomatedEvaluationCheck,
+    CompletedAssessment,
     EvaluationComparison,
     EvaluationScore,
     HumanEvaluation,
@@ -19,7 +22,9 @@ EVALUATION_CRITERIA = (
 )
 
 
-def evaluate_report_structure(result: AssessmentResult) -> AutomatedEvaluation:
+def evaluate_report_structure(
+    result: Union[AssessmentResult, CompletedAssessment],
+) -> AutomatedEvaluation:
     """Check objective report requirements without pretending to judge quality."""
     opportunities = result.opportunities
     titles = [opportunity.title.casefold() for opportunity in opportunities]

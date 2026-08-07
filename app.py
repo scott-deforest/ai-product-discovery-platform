@@ -27,6 +27,7 @@ from src.ingestion import (
     read_extracted_text,
     save_uploaded_document,
 )
+from src.evaluation import evaluate_report_structure
 from src.models import CompletedAssessment, EvidencePack
 from src.reporting import score_interpretation
 from src.vector_store import (
@@ -59,6 +60,36 @@ def _format_report_label(run: dict[str, object]) -> str:
     return local_time.strftime("%b %-d, %Y at %-I:%M %p")
 
 
+def render_automatic_evaluation(report: CompletedAssessment) -> None:
+    """Show deterministic report checks with plain-language recovery guidance."""
+    evaluation = evaluate_report_structure(report)
+    passed_count = sum(check.passed for check in evaluation.checks)
+    check_count = len(evaluation.checks)
+
+    st.markdown("#### Automatic report checks")
+    st.caption(
+        "These checks confirm that the report is complete and traceable. They do "
+        "not decide whether an opportunity is a good investment."
+    )
+    if evaluation.passed:
+        st.success(f"Passed all {check_count} report checks.")
+    else:
+        st.warning(
+            f"Passed {passed_count} of {check_count} report checks. Review the "
+            "items marked for attention before using this report to make a decision."
+        )
+
+    with st.expander(
+        "Review automatic checks",
+        expanded=not evaluation.passed,
+    ):
+        for check in evaluation.checks:
+            status_icon = "✅" if check.passed else "⚠️"
+            st.markdown(f"{status_icon} **{check.label}**")
+            if not check.passed:
+                st.caption(f"How to improve: {check.guidance}")
+
+
 def render_assessment_report(report: CompletedAssessment) -> None:
     """Render a saved, evidence-linked assessment for human review."""
     st.markdown("### Assessment report")
@@ -80,6 +111,8 @@ def render_assessment_report(report: CompletedAssessment) -> None:
 | 4.50–5.00 | High-priority validation candidate |
 """
         )
+
+    render_automatic_evaluation(report)
 
     evidence_by_id = {
         citation.citation_id: citation for citation in report.evidence
