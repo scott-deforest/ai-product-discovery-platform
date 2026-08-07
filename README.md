@@ -14,12 +14,15 @@ The platform is designed to help a product leader answer:
 
 ## Project status
 
-**Employer-preview MVP — Sprint 2 complete; Sprint 3 evaluation work in progress.**
+**Employer-preview MVP — Sprint 2 complete; Sprint 3 evaluation and human-review
+foundation complete.**
 
 The end-to-end workflow is functional: documents can be ingested, searched, used
 to generate structured opportunities, scored with a transparent rubric, and
-reopened as saved reports. The application is intentionally local and
-single-user. It is a portfolio demonstration, not a production SaaS product.
+reopened as saved reports. Automatic checks assess report completeness, while a
+human reviewer can score report quality and make revisioned decisions on every
+opportunity. The application is intentionally local and single-user. It is a
+portfolio demonstration, not a production SaaS product.
 
 ## What it demonstrates
 
@@ -56,7 +59,7 @@ See the [sample assessment report](docs/SAMPLE_REPORT.md) for a compact example.
 ```text
 Streamlit interface
        |
-       +-- SQLite -------- assessments, source metadata, runs, ranked reports
+       +-- SQLite -------- assessments, runs, reports, evaluations, decisions
        |
        +-- Local files --- uploads and extracted text
        |
@@ -96,6 +99,16 @@ published weighting and ranks the candidates deterministically:
 The interface translates the composite into a decision band from **Weak
 candidate** through **High-priority validation candidate**. Scores are comparison
 aids—not predicted ROI, confidence percentages, or implementation approval.
+
+The report then passes through two explicitly human-controlled layers:
+
+1. A reviewer scores evidence grounding, specificity, actionability, risk
+   awareness, and decision usefulness. Every score requires a rationale.
+2. The reviewer advances, requests more evidence for, defers, or rejects each
+   opportunity and records why.
+
+Both evaluation changes and opportunity-decision changes are saved as new
+revisions. Earlier reasoning remains visible instead of being overwritten.
 
 ## Local setup
 
@@ -138,7 +151,10 @@ Open `http://localhost:8501` if the browser does not open automatically.
 5. Select **Run and save assessment**.
 6. Review the ranked opportunities and expand their score explanations and
    source evidence.
-7. Refresh the page and reopen the report to demonstrate local persistence.
+7. Complete the five-part human quality evaluation.
+8. Record and revise a decision on each opportunity.
+9. Refresh the page and reopen the report to demonstrate report, evaluation,
+   decision, and revision-history persistence.
 
 The model response can vary between runs. Source-grounding and validation rules
 remain consistent.
@@ -167,6 +183,7 @@ src/assessment_runner.py       Readiness, evidence, generation, and run lifecycl
 src/chunking.py                Deterministic overlapping chunks
 src/config.py                  Local paths and model configuration
 src/database.py                SQLite persistence and report reconstruction
+src/evaluation.py              Automatic checks and human quality comparison
 src/ingestion.py               Upload storage and text extraction
 src/models.py                  Validated Pydantic domain models
 src/prompts/                   Versioned analysis prompts
@@ -198,16 +215,18 @@ API account, retention settings, and organizational policies permit that use.
 - The retrieval and assessment model configuration is developer-managed.
 - Scores depend on source quality and model judgment even though weighting and
   ranking are deterministic.
-- No production monitoring, evaluation dataset, or deployment configuration.
+- Benchmark workflows are synthetic and do not constitute a statistically
+  representative evaluation dataset.
+- No production monitoring or deployment configuration.
 
 ## Roadmap
 
-Sprint 3 will add complexity only where it improves the decision. The first
-increment introduces automatic report checks, a five-part human-review rubric,
-and multiple benchmark workflows. Later increments will add explicit human review
-actions and role-specialized analysis, then compare that candidate pipeline with
-the simpler Sprint 2 baseline. See the [Sprint 3 design](docs/SPRINT_3.md) and the
-[Sprint 2 design](docs/SPRINT_2.md).
+Sprint 3 has established automatic report checks, three benchmark workflows, a
+five-part human quality rubric, and revisioned human decisions. The next increment
+will introduce role-specialized analysis and compare it with the simpler Sprint 2
+pipeline using the saved human baseline. A later UI/UX sprint will improve
+navigation, report density, information hierarchy, and visual polish. See the
+[Sprint 3 design](docs/SPRINT_3.md) and the [Sprint 2 design](docs/SPRINT_2.md).
 
 ## License
 
