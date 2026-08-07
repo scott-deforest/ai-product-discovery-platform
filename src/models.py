@@ -173,3 +173,73 @@ class CompletedAssessment(BaseModel):
     executive_summary: str = Field(min_length=1)
     evidence: list[EvidenceCitation] = Field(min_length=1)
     opportunities: list[RankedOpportunity] = Field(min_length=1)
+
+
+class EvaluationRating(BaseModel):
+    """A human reviewer's score and explanation for one quality criterion."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    score: int = Field(ge=1, le=5)
+    rationale: str = Field(min_length=1)
+
+
+class HumanEvaluation(BaseModel):
+    """A review of one pipeline result against the Sprint 3 quality rubric."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    case_id: str = Field(min_length=1)
+    pipeline_version: str = Field(min_length=1)
+    reviewer: str = Field(min_length=1)
+    evidence_grounding: EvaluationRating
+    specificity: EvaluationRating
+    actionability: EvaluationRating
+    risk_awareness: EvaluationRating
+    decision_usefulness: EvaluationRating
+    notes: str = ""
+
+
+class AutomatedEvaluationCheck(BaseModel):
+    """One deterministic report-quality check with reviewer-facing guidance."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    check_id: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    passed: bool
+    guidance: str = Field(min_length=1)
+
+
+class AutomatedEvaluation(BaseModel):
+    """Deterministic quality checks that do not claim to judge usefulness."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    passed: bool
+    checks: list[AutomatedEvaluationCheck] = Field(min_length=1)
+
+
+class EvaluationScore(BaseModel):
+    """Transparent aggregate of the five human-review criteria."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    case_id: str = Field(min_length=1)
+    pipeline_version: str = Field(min_length=1)
+    overall_score: float = Field(ge=1.0, le=5.0)
+    criterion_scores: dict[str, int]
+
+
+class EvaluationComparison(BaseModel):
+    """Difference between two pipeline reviews of the same benchmark case."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    case_id: str = Field(min_length=1)
+    baseline_pipeline: str = Field(min_length=1)
+    candidate_pipeline: str = Field(min_length=1)
+    baseline_score: float = Field(ge=1.0, le=5.0)
+    candidate_score: float = Field(ge=1.0, le=5.0)
+    score_delta: float = Field(ge=-4.0, le=4.0)
+    criterion_deltas: dict[str, int]

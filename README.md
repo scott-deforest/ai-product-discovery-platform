@@ -14,7 +14,7 @@ The platform is designed to help a product leader answer:
 
 ## Project status
 
-**Employer-preview MVP — Sprint 2 complete.**
+**Employer-preview MVP — Sprint 2 complete; Sprint 3 evaluation work in progress.**
 
 The end-to-end workflow is functional: documents can be ingested, searched, used
 to generate structured opportunities, scored with a transparent rubric, and
@@ -194,9 +194,12 @@ API account, retention settings, and organizational policies permit that use.
 
 ## Roadmap
 
-Sprint 3 will add complexity only where it improves the decision: specialized
-assessment roles, stronger evaluation, and explicit human review actions. See the
-[Sprint 2 design](docs/SPRINT_2.md) for the completed assessment foundation.
+Sprint 3 will add complexity only where it improves the decision. The first
+increment introduces automatic report checks, a five-part human-review rubric,
+and multiple benchmark workflows. Later increments will add explicit human review
+actions and role-specialized analysis, then compare that candidate pipeline with
+the simpler Sprint 2 baseline. See the [Sprint 3 design](docs/SPRINT_3.md) and the
+[Sprint 2 design](docs/SPRINT_2.md).
 
 ## License
 
