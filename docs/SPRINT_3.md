@@ -2,16 +2,15 @@
 
 ## Sprint goal
 
-Improve the quality of the product decision—not merely the complexity of the AI
-architecture. Sprint 3 will measure the existing single-analysis pipeline, add a
-human decision workflow, introduce specialist perspectives, and compare the new
-pipeline against the Sprint 2 baseline.
+Add explicit quality checks and human accountability to the evidence-grounded
+assessment workflow. Sprint 3 makes report quality reviewable, keeps opportunity
+decisions in human hands, and preserves changes in judgment over time.
 
 ## Product principle
 
-Specialist agents are an experiment, not an assumed improvement. They earn their
-place only if reviewers find their output more grounded, specific, actionable,
-risk-aware, or useful for making a decision.
+The AI proposes; a person evaluates the report and decides what moves forward.
+Automated checks may verify completeness and traceability, but they must not be
+presented as substitutes for human judgment.
 
 ## Stage 1: Evaluation baseline
 
@@ -52,8 +51,8 @@ Earlier evaluations remain available so changes in judgment are visible.
 
 ### Benchmark cases
 
-The first evaluation set will contain several synthetic workflows with different
-opportunity and risk profiles:
+The repository contains three synthetic workflows with different opportunity and
+risk profiles:
 
 1. Customer support — high-volume knowledge work with privacy and human-review constraints.
 2. Invoice processing — document extraction and exception handling with financial controls.
@@ -78,31 +77,6 @@ decisions create new revisions instead of overwriting earlier judgment, providin
 a local audit history. The AI proposes; the human remains accountable for the
 product decision.
 
-## Stage 3: Specialist assessment
-
-The candidate pipeline will introduce three bounded perspectives:
-
-- Business value
-- Technical feasibility
-- Risk and governance
-
-A synthesis step will reconcile their findings into the same report contract used
-by Sprint 2. Specialist output must remain source-grounded, and trusted citation
-metadata will still be attached by application code.
-
-## Stage 4: Comparison
-
-Each benchmark case will be run through both pipelines. The comparison will show:
-
-- Automatic-check results.
-- Overall human-review score and criterion-level changes.
-- Model and prompt versions.
-- Reviewer rationales.
-- Additional latency and API usage where available.
-
-The specialist pipeline will be retained only if the measured benefit justifies
-its additional cost and complexity.
-
 ## Deferred UI/UX sprint
 
 The current interface prioritizes functional transparency over visual polish. A
@@ -115,10 +89,13 @@ separate from validating the Sprint 3 decision workflow.
 
 Sprint 3 is complete when:
 
-- At least three benchmark workflows can be evaluated consistently.
+- Three synthetic benchmark workflows are available for repeatable assessment.
 - Automatic report checks and the human rubric are visible in the application.
+- Human quality evaluations and their rationales persist as revision history.
 - Human decisions and notes persist with the saved report.
-- The specialist pipeline produces the same validated report contract as Sprint 2.
-- Baseline and specialist results can be compared by case and criterion.
-- Tests cover evaluation, review persistence, orchestration, and failure recovery.
-- The README explains what improved, what did not, and what the comparison cannot prove.
+- Tests cover automatic evaluation, quality scores, decision persistence, and
+  revision history without making live API calls.
+- The README explains the human decision boundary and current limitations.
+
+Sprint 3 met this definition of done. Role-specialized analysis and comparison
+against the simpler pipeline move to Sprint 4.

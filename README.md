@@ -14,8 +14,8 @@ The platform is designed to help a product leader answer:
 
 ## Project status
 
-**Employer-preview MVP — Sprint 2 complete; Sprint 3 evaluation and human-review
-foundation complete.**
+**Employer-preview MVP — Sprints 1–3 complete; Sprint 4 specialist analysis is
+planned.**
 
 The end-to-end workflow is functional: documents can be ingested, searched, used
 to generate structured opportunities, scored with a transparent rubric, and
@@ -221,12 +221,19 @@ API account, retention settings, and organizational policies permit that use.
 
 ## Roadmap
 
-Sprint 3 has established automatic report checks, three benchmark workflows, a
-five-part human quality rubric, and revisioned human decisions. The next increment
-will introduce role-specialized analysis and compare it with the simpler Sprint 2
-pipeline using the saved human baseline. A later UI/UX sprint will improve
-navigation, report density, information hierarchy, and visual polish. See the
-[Sprint 3 design](docs/SPRINT_3.md) and the [Sprint 2 design](docs/SPRINT_2.md).
+- **Sprint 1:** Document ingestion, chunking, embeddings, and scoped retrieval.
+- **Sprint 2:** Evidence-grounded opportunity generation, transparent scoring,
+  persistence, and report review.
+- **Sprint 3:** Automatic evaluation, human quality scoring, human opportunity
+  decisions, and revision history.
+- **Sprint 4:** Role-specialized analysis and measured comparison against the
+  simpler pipeline.
+
+Sprint 4 begins by capturing baseline evaluations for all three synthetic
+workflows before specialist results can influence reviewer expectations. A later
+UI/UX sprint will improve navigation, report density, information hierarchy, and
+visual polish. See the [Sprint 4 plan](docs/SPRINT_4.md), [Sprint 3 design](docs/SPRINT_3.md),
+and [Sprint 2 design](docs/SPRINT_2.md).
 
 ## License
 
