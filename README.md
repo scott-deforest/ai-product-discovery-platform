@@ -112,12 +112,12 @@ revisions. Earlier reasoning remains visible instead of being overwritten.
 
 ## Local setup
 
-Python 3.9 or newer is required.
+Python 3.12 or newer is required.
 
 ```bash
 git clone https://github.com/scott-deforest/ai-product-discovery-platform.git
 cd ai-product-discovery-platform
-python3 -m venv .venv
+python3.12 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
