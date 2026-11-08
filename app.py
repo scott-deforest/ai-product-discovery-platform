@@ -217,7 +217,7 @@ def render_human_quality_evaluation(report: CompletedAssessment) -> None:
     ):
         with st.form(f"human-quality-evaluation-{report.run_id}", border=False):
             reviewer = st.text_input(
-                "Reviewer name",
+                "Reviewer name (required)",
                 value=latest.reviewer if latest else "",
                 placeholder="Your name",
             )
@@ -235,7 +235,7 @@ def render_human_quality_evaluation(report: CompletedAssessment) -> None:
                         key=f"{report.run_id}-{criterion_id}-score",
                     ),
                     "rationale": st.text_area(
-                        f"Why did you give {label.lower()} this score?",
+                        f"Why did you give {label.lower()} this score? (required)",
                         value=current_rating.rationale if current_rating else "",
                         placeholder="Describe what worked and what should improve.",
                         key=f"{report.run_id}-{criterion_id}-rationale",
@@ -249,37 +249,61 @@ def render_human_quality_evaluation(report: CompletedAssessment) -> None:
             save_evaluation = st.form_submit_button("Save report evaluation")
 
         if save_evaluation:
-            try:
-                evaluation = HumanEvaluation(
-                    case_id=str(run["assessment_id"]),
-                    pipeline_version=str(run["prompt_version"]),
-                    reviewer=reviewer,
-                    notes=notes,
-                    **submitted_ratings,
+            validation_message = None
+            if not reviewer.strip():
+                validation_message = (
+                    "Enter your reviewer name before saving the evaluation."
                 )
-                save_human_evaluation(report.run_id, evaluation)
-            except ValidationError:
+            elif any(
+                not str(rating["rationale"]).strip()
+                for rating in submitted_ratings.values()
+            ):
+                validation_message = (
+                    "Explain every score before saving the evaluation."
+                )
+
+            if validation_message:
                 LOGGER.warning(
-                    "human_evaluation_validation_failed run_id=%s",
+                    "human_evaluation_validation_failed run_id=%s message=%s",
                     report.run_id,
-                    exc_info=True,
+                    validation_message,
                 )
-                st.error(
-                    "Complete your name and explain every score before saving "
-                    "the evaluation."
-                )
-            except Exception:
-                LOGGER.exception(
-                    "human_evaluation_save_failed run_id=%s",
-                    report.run_id,
-                )
-                st.error(
-                    "We couldn't save this evaluation. Your report is safe. "
-                    "Check the app logs for technical details and try again."
-                )
+                st.toast(validation_message, icon="⚠️")
+                st.error(validation_message)
             else:
-                st.session_state[flash_key] = True
-                st.rerun()
+                try:
+                    evaluation = HumanEvaluation(
+                        case_id=str(run["assessment_id"]),
+                        pipeline_version=str(run["prompt_version"]),
+                        reviewer=reviewer,
+                        notes=notes,
+                        **submitted_ratings,
+                    )
+                    save_human_evaluation(report.run_id, evaluation)
+                except ValidationError:
+                    LOGGER.warning(
+                        "human_evaluation_validation_failed run_id=%s",
+                        report.run_id,
+                        exc_info=True,
+                    )
+                    validation_message = (
+                        "Complete all required evaluation fields before saving."
+                    )
+                    st.toast(validation_message, icon="⚠️")
+                    st.error(validation_message)
+                except Exception:
+                    LOGGER.exception(
+                        "human_evaluation_save_failed run_id=%s",
+                        report.run_id,
+                    )
+                    st.toast("The evaluation could not be saved.", icon="⚠️")
+                    st.error(
+                        "We couldn't save this evaluation. Your report is safe. "
+                        "Check the app logs for technical details and try again."
+                    )
+                else:
+                    st.session_state[flash_key] = True
+                    st.rerun()
 
     history = list_human_evaluation_history(report.run_id)
     if len(history) > 1:
@@ -304,6 +328,9 @@ def render_human_review(
     opportunity_rank: int,
 ) -> None:
     """Capture the accountable human decision for one generated opportunity."""
+    saved_message_key = (
+        f"opportunity-review-saved-{report.run_id}-{opportunity_rank}"
+    )
     reviews_by_rank = {
         review.opportunity_rank: review
         for review in list_latest_opportunity_reviews(report.run_id)
@@ -315,6 +342,8 @@ def render_human_review(
         "The AI proposes this opportunity. A person decides whether it should "
         "move forward and records why."
     )
+    if st.session_state.pop(saved_message_key, False):
+        st.success("Your review decision was saved.")
     if current_review:
         st.info(
             f"Current decision: "
@@ -365,7 +394,8 @@ def render_human_review(
         except ValueError as error:
             st.error(str(error))
         else:
-            st.success("Your review decision was saved.")
+            st.session_state[saved_message_key] = True
+            st.rerun()
 
     history = list_opportunity_review_history(report.run_id, opportunity_rank)
     if len(history) > 1:

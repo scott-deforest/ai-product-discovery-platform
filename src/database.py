@@ -858,15 +858,25 @@ def save_opportunity_review(
         if opportunity is None:
             raise ValueError("The selected opportunity does not exist in this report.")
 
-        latest_revision = connection.execute(
+        latest_review = connection.execute(
             """
-            SELECT COALESCE(MAX(revision), 0) AS revision
+            SELECT decision, note, revision
             FROM opportunity_reviews
             WHERE run_id = ? AND opportunity_rank = ?
+            ORDER BY revision DESC
+            LIMIT 1
             """,
             (run_id, opportunity_rank),
         ).fetchone()
-        revision = int(latest_revision["revision"]) + 1
+        if (
+            latest_review is not None
+            and latest_review["decision"] == validated_decision.value
+            and latest_review["note"] == clean_note
+        ):
+            raise ValueError(
+                "Nothing changed. Update the decision or note before saving."
+            )
+        revision = int(latest_review["revision"]) + 1 if latest_review else 1
         connection.execute(
             """
             INSERT INTO opportunity_reviews (

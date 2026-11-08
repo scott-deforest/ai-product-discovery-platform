@@ -162,6 +162,31 @@ class HumanReviewPersistenceTests(unittest.TestCase):
         self.assertEqual([review.revision for review in history], [2, 1])
         self.assertEqual(latest[0].decision, ReviewDecision.NEEDS_EVIDENCE)
 
+    def test_unchanged_decision_does_not_create_a_duplicate_revision(self) -> None:
+        save_opportunity_review(
+            self.run_id,
+            1,
+            ReviewDecision.ADVANCE,
+            "The evidence supports a pilot.",
+            self.database_path,
+        )
+
+        with self.assertRaisesRegex(ValueError, "Nothing changed"):
+            save_opportunity_review(
+                self.run_id,
+                1,
+                ReviewDecision.ADVANCE,
+                "The evidence supports a pilot.",
+                self.database_path,
+            )
+
+        history = list_opportunity_review_history(
+            self.run_id,
+            1,
+            self.database_path,
+        )
+        self.assertEqual(len(history), 1)
+
     def test_decision_requires_an_explanatory_note(self) -> None:
         with self.assertRaisesRegex(ValueError, "note explaining"):
             save_opportunity_review(
