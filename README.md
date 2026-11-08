@@ -14,7 +14,7 @@ The platform is designed to help a product leader answer:
 
 ## Project status
 
-**Employer-preview MVP — Sprints 1–3 complete; Sprint 4 specialist analysis is
+**Personal portfolio MVP — Sprints 1–3 complete; Sprint 4 specialist analysis is
 planned.**
 
 The end-to-end workflow is functional: documents can be ingested, searched, used
